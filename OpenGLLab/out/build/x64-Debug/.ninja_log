@@ -1,0 +1,25 @@
+# ninja log v6
+48	719	7792899256989535	glfw_build/src/CMakeFiles/glfw.dir/null_window.c.obj	83836d328f697452
+13	801	7792899256640234	glfw_build/src/CMakeFiles/glfw.dir/init.c.obj	9564a69445a16962
+61	775	7792899257116849	glfw_build/src/CMakeFiles/glfw.dir/win32_time.c.obj	36a2e20d258abe71
+37	735	7792899256878685	glfw_build/src/CMakeFiles/glfw.dir/osmesa_context.c.obj	a2fa2a0428db376
+56	767	7792899257070206	glfw_build/src/CMakeFiles/glfw.dir/win32_module.c.obj	742307015c758d7e
+19	790	7792899256690368	glfw_build/src/CMakeFiles/glfw.dir/monitor.c.obj	d3e743c8b9ee45f0
+66	745	7792899257162950	glfw_build/src/CMakeFiles/glfw.dir/win32_thread.c.obj	ffbfa76b7e121bf8
+33	762	7792899256838579	glfw_build/src/CMakeFiles/glfw.dir/egl_context.c.obj	13b10a1a945972a0
+53	839	7792899257034952	glfw_build/src/CMakeFiles/glfw.dir/null_joystick.c.obj	afab61e83821337f
+41	771	7792899256913810	glfw_build/src/CMakeFiles/glfw.dir/null_init.c.obj	b2351fcba401fa20
+70	753	7792899257209174	glfw_build/src/CMakeFiles/glfw.dir/win32_init.c.obj	58180b4857456ca8
+382	690	7792901639964540	FirstOpenGL.exe	18c0183a2f65d642
+45	780	7792899256953919	glfw_build/src/CMakeFiles/glfw.dir/null_monitor.c.obj	7b8c391490832978
+10	786	7792899256604299	glfw_build/src/CMakeFiles/glfw.dir/context.c.obj	7f9cb49dd0dcb636
+25	794	7792899256750524	glfw_build/src/CMakeFiles/glfw.dir/vulkan.c.obj	f80ddea5c56133df
+16	797	7792899256660286	glfw_build/src/CMakeFiles/glfw.dir/input.c.obj	a703dc091b5906dc
+29	852	7792899256796569	glfw_build/src/CMakeFiles/glfw.dir/window.c.obj	213343556cd3e872
+22	860	7792899256720448	glfw_build/src/CMakeFiles/glfw.dir/platform.c.obj	4985ac84345a3bb0
+74	888	7792899257244342	glfw_build/src/CMakeFiles/glfw.dir/win32_joystick.c.obj	20e5eaa4bd087abe
+725	1127	7792899263763289	glfw_build/src/CMakeFiles/glfw.dir/win32_monitor.c.obj	13cc570e9fb04482
+735	1142	7792899263854943	glfw_build/src/CMakeFiles/glfw.dir/win32_window.c.obj	c958c6ba11cb7bdb
+745	1145	7792899263962522	glfw_build/src/CMakeFiles/glfw.dir/wgl_context.c.obj	56dadf2cb95f5cbf
+1146	1206	7792899267960010	glfw_build/src/glfw3.lib	bf4e26c3c742346c
+11	381	7792901636259453	CMakeFiles/FirstOpenGL.dir/src/main.cpp.obj	46aa3bb98035b03a
