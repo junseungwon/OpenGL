@@ -1,5 +1,5 @@
 C:/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-Debug/CMakeFiles/glad.dir
-C:/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-Debug/CMakeFiles/FirstOpenGL.dir
+C:/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-Debug/CMakeFiles/HelloTriangle.dir
 C:/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-Debug/CMakeFiles/edit_cache.dir
 C:/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-Debug/CMakeFiles/rebuild_cache.dir
 C:/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-Debug/CMakeFiles/list_install_components.dir

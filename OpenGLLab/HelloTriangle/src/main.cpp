@@ -5,9 +5,6 @@
 #include <sstream>
 
 
-
-
-
 static void CheckShaderCompile(GLuint shader, const char* name)
 {
 	GLint success = 0;
@@ -109,7 +106,7 @@ int main() {
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-	GLFWwindow* window = glfwCreateWindow(800, 600, "FirstOpenGL with GLAD", nullptr, nullptr);
+	GLFWwindow* window = glfwCreateWindow(800, 600, "Hello with GLAD", nullptr, nullptr);
 	if (!window) {
 		std::cerr << "Failed to create GLFW window" << std::endl;
 		glfwTerminate();
@@ -122,54 +119,65 @@ int main() {
 		std::cerr << "Failed to initialize GLAD" << std::endl;
 		return -1;
 	}
+
 	// 렌더 루프
 #pragma region 랜더루프
-	// NDC 좌표 (반시계 방향)
-	float vertices[] = {
-	-0.5f, -0.5f, 0.0f, // 왼쪽 아래
-	 0.5f, -0.5f, 0.0f, // 오른쪽 아래
-	 0.0f,  0.5f, 0.0f // 위쪽
+	float vertices2[] = {
+		// 삼각형 1
+		-0.9f, -0.5f, 0.0f,
+		 0.0f, -0.5f, 0.0f,
+		-0.45f, 0.5f, 0.0f,
+		// 삼각형 2
+		 0.0f, -0.5f, 0.0f,
+		 0.9f, -0.5f, 0.0f,
+		 0.45f, 0.5f, 0.0f
 	};
-	unsigned int VBO, VAO;
 
+	float quadVertices[] = {
+	0.5f,  0.5f, 0.0f,  // 0: 우상
+	0.5f, -0.5f, 0.0f,  // 1: 우하
+   -0.5f, -0.5f, 0.0f,  // 2: 좌하
+   -0.5f,  0.5f, 0.0f   // 3: 좌상
+	};
 
-	// 1) VAO 생성 및 바인딩
-	glGenVertexArrays(1, &VAO);
-	glBindVertexArray(VAO);
+	float colored[] = {
+		//  위치              // 색상
+		-0.5f, -0.5f, 0.0f,   1.0f, 0.0f, 0.0f,
+		 0.5f, -0.5f, 0.0f,   0.0f, 1.0f, 0.0f,
+		 0.0f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f
+	};
 
+	unsigned int indices[] = {
+		0, 1, 3,  // 첫 삼각형 (우상-우하-좌상)
+		1, 2, 3   // 둘째 삼각형 (우하-좌하-좌상)
+	};
 
-	// 2) VBO 생성 및 데이터 업로드
-	glGenBuffers(1, &VBO);
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-	// vertices 배열을 GPU로 복사
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+	unsigned int VBO2, VAO2, EBO;
 
+	glGenVertexArrays(1, &VAO2);
+	glBindVertexArray(VAO2);
 
-	// 3) 정점 속성 포인터 설정 (위치 속성만 있는 경우)
-	// layout(location = 0)에 vec3 입력을 연결
-	// 인자: (인덱스, 크기, 타입, 정규화 여부, stride, offset)
-	glVertexAttribPointer(
-		0, // attribute index (location=0)
-		3, // vec3 → 3개 구성요소
-		GL_FLOAT, // 각 구성요소 타입
-		GL_FALSE, // 정규화 불필요
-		3 * sizeof(float), // stride: 한 정점에서 다음 정점까지 바이트 간격
-		(void*)0 // 시작 오프셋
-	);
-	// 해당 속성 활성화
+	// VBO
+	glGenBuffers(1, &VBO2);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO2);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
+
+	// EBO (VAO가 바인딩된 상태에서!)
+	glGenBuffers(1, &EBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+	// 위치 속성
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 	glEnableVertexAttribArray(0);
 
-
-	// (선택) 정리
-	// glBindBuffer(GL_ARRAY_BUFFER, 0);
-	// glBindVertexArray(0);
-
-#pragma endregion
+	// 색상 속성: offset 3 * sizeof(float)
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+	glEnableVertexAttribArray(1);
 
 
-
+	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);   // 선 모드
 	// (가정) GLFW로 창/컨텍스트 생성 완료, GLAD 초기화 완료
-
 	GLuint program = CreateShaderProgramFromFiles("shaders/simple.vert", "shaders/simple.frag");
 
 	while (!glfwWindowShouldClose(window))
@@ -180,7 +188,7 @@ int main() {
 
 		// 2) 그리기
 		glUseProgram(program);
-		glBindVertexArray(VAO);
+		glBindVertexArray(VAO2);
 		glDrawArrays(GL_TRIANGLES, 0, 3); // 정점 3개로 삼각형 1개
 
 		// 3) 프레임 마무리
