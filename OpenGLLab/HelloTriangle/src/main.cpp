@@ -122,34 +122,30 @@ int main() {
 
 	// 렌더 루프
 #pragma region 랜더루프
-	float vertices2[] = {
-		// 삼각형 1
-		-0.9f, -0.5f, 0.0f,
-		 0.0f, -0.5f, 0.0f,
-		-0.45f, 0.5f, 0.0f,
-		// 삼각형 2
-		 0.0f, -0.5f, 0.0f,
-		 0.9f, -0.5f, 0.0f,
-		 0.45f, 0.5f, 0.0f
-	};
-
 	float quadVertices[] = {
-	0.5f,  0.5f, 0.0f,  // 0: 우상
-	0.5f, -0.5f, 0.0f,  // 1: 우하
-   -0.5f, -0.5f, 0.0f,  // 2: 좌하
-   -0.5f,  0.5f, 0.0f   // 3: 좌상
+		// A
+-0.8f, -0.2f, 0.0f,
+-0.2f, -0.2f, 0.0f,
+-0.5f,  0.4f, 0.0f,
+// B
+ 0.2f, -0.2f, 0.0f,
+ 0.8f, -0.2f, 0.0f,
+ 0.5f,  0.4f, 0.0f
 	};
 
 	float colored[] = {
-		//  위치              // 색상
-		-0.5f, -0.5f, 0.0f,   1.0f, 0.0f, 0.0f,
-		 0.5f, -0.5f, 0.0f,   0.0f, 1.0f, 0.0f,
-		 0.0f,  0.5f, 0.0f,   0.0f, 0.0f, 1.0f
+	 // A
+    -0.8f,-0.2f,0.0f,   1.0f,0.7f,0.0f,
+    -0.2f,-0.2f,0.0f,   0.6f,0.0f,0.0f,
+    -0.5f, 0.4f,0.0f,   0.1f,0.0f,0.0f,
+    // B
+     0.2f,-0.2f,0.0f,   1.0f,0.7f,0.0f,
+     0.8f,-0.2f,0.0f,   0.6f,0.0f,0.0f,
+     0.5f, 0.4f,0.0f,	0.1f,0.0f,0.0f,
 	};
 
 	unsigned int indices[] = {
-		0, 1, 3,  // 첫 삼각형 (우상-우하-좌상)
-		1, 2, 3   // 둘째 삼각형 (우하-좌하-좌상)
+		 0,1,2,  3,4,5
 	};
 
 	unsigned int VBO2, VAO2, EBO;
@@ -160,20 +156,20 @@ int main() {
 	// VBO
 	glGenBuffers(1, &VBO2);
 	glBindBuffer(GL_ARRAY_BUFFER, VBO2);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
-
-	// EBO (VAO가 바인딩된 상태에서!)
-	glGenBuffers(1, &EBO);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(colored), colored, GL_STATIC_DRAW);
 
 	// 위치 속성
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
 	glEnableVertexAttribArray(0);
 
 	// 색상 속성: offset 3 * sizeof(float)
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
 	glEnableVertexAttribArray(1);
+
+	// EBO (VAO가 바인딩된 상태에서!)
+	glGenBuffers(1, &EBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
 
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);   // 선 모드
@@ -189,8 +185,8 @@ int main() {
 		// 2) 그리기
 		glUseProgram(program);
 		glBindVertexArray(VAO2);
-		glDrawArrays(GL_TRIANGLES, 0, 3); // 정점 3개로 삼각형 1개
-
+		//glDrawArrays(GL_TRIANGLES, 0, 3); // 정점 3개로 삼각형 1개
+		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0); // 인덱스 6개로 사각형 2개
 		// 3) 프레임 마무리
 		glfwSwapBuffers(window);
 		glfwPollEvents();
