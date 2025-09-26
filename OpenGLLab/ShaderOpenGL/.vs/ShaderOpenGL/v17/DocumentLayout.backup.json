@@ -14,7 +14,7 @@
   "DocumentGroupContainers": [
     {
       "Orientation": 0,
-      "VerticalTabListWidth": 256,
+      "VerticalTabListWidth": 100,
       "DocumentGroups": [
         {
           "DockedWidth": 200,
@@ -28,9 +28,9 @@
               "RelativeDocumentMoniker": "src\\main.cpp",
               "ToolTip": "C:\\OpenGL\\OpenGLLab\\ShaderOpenGL\\src\\main.cpp",
               "RelativeToolTip": "src\\main.cpp",
-              "ViewState": "AgIAAAkAAAAAAAAAAADwvxAAAAA0AAAAAAAAAA==",
+              "ViewState": "AgIAAAAAAAAAAAAAAADwvw4AAAAdAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2025-09-19T02:02:13.212Z",
+              "WhenOpened": "2025-09-26T01:57:24.717Z",
               "EditorCaption": ""
             },
             {
@@ -41,9 +41,9 @@
               "RelativeDocumentMoniker": "CMakeLists.txt",
               "ToolTip": "C:\\OpenGL\\OpenGLLab\\ShaderOpenGL\\CMakeLists.txt",
               "RelativeToolTip": "CMakeLists.txt",
-              "ViewState": "AgIAAAAAAAAAAAAAAADwvwAAAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAAAAAAAAAAAAAAADwvxkAAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003109|",
-              "WhenOpened": "2025-09-19T02:02:33.191Z",
+              "WhenOpened": "2025-09-26T01:53:34.332Z",
               "EditorCaption": ""
             }
           ]

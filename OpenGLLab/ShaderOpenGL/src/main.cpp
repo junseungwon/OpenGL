@@ -3,6 +3,8 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+using namespace std;
+
 
 static void CheckShaderCompile(GLuint shader, const char* name)
 {
@@ -47,7 +49,6 @@ GLuint CreateShaderProgram(const char* vs, const char* fs)
 
 	glDeleteShader(v);
 	glDeleteShader(f);
-
 	return p;
 }
 
@@ -106,7 +107,7 @@ int main() {
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-	GLFWwindow* window = glfwCreateWindow(800, 600, "FirstOpenGL with GLAD", nullptr, nullptr);
+	GLFWwindow* window = glfwCreateWindow(800, 600, "Hello with GLAD", nullptr, nullptr);
 	if (!window) {
 		std::cerr << "Failed to create GLFW window" << std::endl;
 		glfwTerminate();
@@ -119,51 +120,61 @@ int main() {
 		std::cerr << "Failed to initialize GLAD" << std::endl;
 		return -1;
 	}
+
 	// 렌더 루프
 #pragma region 랜더루프
-	// NDC 좌표 (반시계 방향)
-	float vertices[] = {
-	-0.5f, -0.5f, 0.0f, // 왼쪽 아래
-	 0.5f, -0.5f, 0.0f, // 오른쪽 아래
-	 0.0f,  0.5f, 0.0f // 위쪽
+	float quadVertices[] = {
+		// A
+-0.8f, -0.2f, 0.0f,
+-0.2f, -0.2f, 0.0f,
+-0.5f,  0.4f, 0.0f,
+// B
+ 0.2f, -0.2f, 0.0f,
+ 0.8f, -0.2f, 0.0f,
+ 0.5f,  0.4f, 0.0f
 	};
-	unsigned int VBO, VAO;
 
+	float colored[] = {
+	 // A
+    -0.8f,-0.2f,0.0f,   1.0f,0.7f,0.0f,
+    -0.2f,-0.2f,0.0f,   0.6f,0.0f,0.0f,
+    -0.5f, 0.4f,0.0f,   0.1f,0.0f,0.0f,
+    // B
+     0.2f,-0.2f,0.0f,   1.0f,0.7f,0.0f,
+     0.8f,-0.2f,0.0f,   0.6f,0.0f,0.0f,
+     0.5f, 0.4f,0.0f,	0.1f,0.0f,0.0f,
+	};
 
-	// 1) VAO 생성 및 바인딩
-	glGenVertexArrays(1, &VAO);
-	glBindVertexArray(VAO);
+	unsigned int indices[] = {
+		 0,1,2,  3,4,5
+	};
 
+	unsigned int VBO2, VAO2, EBO;
 
-	// 2) VBO 생성 및 데이터 업로드
-	glGenBuffers(1, &VBO);
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-	// vertices 배열을 GPU로 복사
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+	glGenVertexArrays(1, &VAO2);
+	glBindVertexArray(VAO2);
 
+	// VBO
+	glGenBuffers(1, &VBO2);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO2);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(colored), colored, GL_STATIC_DRAW);
 
-	// 3) 정점 속성 포인터 설정 (위치 속성만 있는 경우)
-	// layout(location = 0)에 vec3 입력을 연결
-	// 인자: (인덱스, 크기, 타입, 정규화 여부, stride, offset)
-	glVertexAttribPointer(
-		0, // attribute index (location=0)
-		3, // vec3 → 3개 구성요소
-		GL_FLOAT, // 각 구성요소 타입
-		GL_FALSE, // 정규화 불필요
-		3 * sizeof(float), // stride: 한 정점에서 다음 정점까지 바이트 간격
-		(void*)0 // 시작 오프셋
-	);
-	// 해당 속성 활성화
+	// 위치 속성
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
 	glEnableVertexAttribArray(0);
 
-	// (선택) 정리
-	// glBindBuffer(GL_ARRAY_BUFFER, 0);
-	// glBindVertexArray(0);
-#pragma endregion
+	// 색상 속성: offset 3 * sizeof(float)
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+	glEnableVertexAttribArray(1);
+
+	// EBO (VAO가 바인딩된 상태에서!)
+	glGenBuffers(1, &EBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
 
-#pragma region Shader
-	// 1) 셰이더 소스 (실습 편의를 위해 여기선 문자열로 바로 넣습니다)
+#pragma region Shader 프로그램
+	// 1) 셰이더 소스 (실습 편의를 위해 여기선 문자열로 바로 넣었음)
 	const char* vtxSrc = R"(#version 330 core
 layout (location = 0) in vec3 aPos;
 void main(){ gl_Position = vec4(aPos, 1.0); })";
@@ -206,27 +217,39 @@ void main(){ FragColor = vec4(1.0, 0.5, 0.2, 1.0); })";
 	// 5) 사용
 	glUseProgram(prog);
 
+
+
 #pragma endregion
 
 
-
-	std::cout << "일반 로그 메시지입니다.\n";  // 표준 출력
+	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);   // 선 모드
 	// (가정) GLFW로 창/컨텍스트 생성 완료, GLAD 초기화 완료
-	GLint colorLoc = glGetUniformLocation(prog, "uColor");
 	GLuint program = CreateShaderProgramFromFiles("shaders/simple.vert", "shaders/simple.frag");
+	GLint colorLoc = glGetUniformLocation(prog, "uColor");
+		cout << "OpenGL ";
+	while (!glfwWindowShouldClose(window))
+	{
 
-	// 렌더 루프 안쪽
-	while (!glfwWindowShouldClose(window)) {
 		float t = (float)glfwGetTime();               // 경과 시간(초)
-		float g = 0.5f * std::sin(t) + 0.5f;          // 0~1 사이로 변환
-		glUseProgram(prog);                           // (중요) 활성화 먼저
+		float g = 0.5f * std::sin(t) + 0.5f;
+
+		// 1) 화면 초기화(배경색)
+		glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+
+		// 2) 그리기
+
+		glUseProgram(program);
 		glUniform4f(colorLoc, 0.0f, g, 1.0f - g, 1.0f); // 파랑<->초록 계열 변화
-		glBindVertexArray(VAO);
-		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glBindVertexArray(VAO2);
+
+
+		//glDrawArrays(GL_TRIANGLES, 0, 3); // 정점 3개로 삼각형 1개
+		glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0); // 인덱스 6개로 사각형 2개
+		// 3) 프레임 마무리
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 	}
-
 	glfwDestroyWindow(window);
 	glfwTerminate();
 	return 0;
