@@ -1,8 +1,8 @@
-# Install script for directory: C:/OpenGL/OpenGLLab/external/glfw-3.4/src
+# Install script for directory: D:/ProjectFiles/OpenGL/OpenGLLab/external/glfw-3.4/src
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
-  set(CMAKE_INSTALL_PREFIX "C:/OpenGL/OpenGLLab/HelloTriangle/out/install/x64-Debug")
+  set(CMAKE_INSTALL_PREFIX "D:/ProjectFiles/OpenGL/OpenGLLab/HelloTriangle/out/install/x64-debug")
 endif()
 string(REGEX REPLACE "/$" "" CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 
@@ -33,6 +33,6 @@ if(NOT DEFINED CMAKE_CROSSCOMPILING)
 endif()
 
 if(CMAKE_INSTALL_COMPONENT STREQUAL "Unspecified" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib" TYPE STATIC_LIBRARY FILES "C:/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-Debug/glfw_build/src/glfw3.lib")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib" TYPE STATIC_LIBRARY FILES "D:/ProjectFiles/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-debug/glfw_build/src/glfw3.lib")
 endif()
 

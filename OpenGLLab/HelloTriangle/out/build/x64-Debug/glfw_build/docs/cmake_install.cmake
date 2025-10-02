@@ -1,8 +1,8 @@
-# Install script for directory: C:/OpenGL/OpenGLLab/external/glfw-3.4/docs
+# Install script for directory: D:/ProjectFiles/OpenGL/OpenGLLab/external/glfw-3.4/docs
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
-  set(CMAKE_INSTALL_PREFIX "C:/OpenGL/OpenGLLab/HelloTriangle/out/install/x64-Debug")
+  set(CMAKE_INSTALL_PREFIX "D:/ProjectFiles/OpenGL/OpenGLLab/HelloTriangle/out/install/x64-debug")
 endif()
 string(REGEX REPLACE "/$" "" CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 

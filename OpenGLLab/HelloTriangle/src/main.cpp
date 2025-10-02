@@ -51,6 +51,7 @@ GLuint CreateShaderProgram(const char* vs, const char* fs)
 
 	glDeleteShader(v);
 	glDeleteShader(f);
+
 	return p;
 }
 
@@ -170,20 +171,59 @@ int main() {
 
 	// (가정) GLFW로 창/컨텍스트 생성 완료, GLAD 초기화 완료
 
-	GLuint program = CreateShaderProgramFromFiles("shaders/simple.vert", "shaders/simple.frag");
+//	GLuint program = CreateShaderProgramFromFiles("shaders/simple.vert", "shaders/simple.frag");
 
-	while (!glfwWindowShouldClose(window))
-	{
-		// 1) 화면 초기화(배경색)
-		glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT);
+	// 교체: (인라인 셰이더 생성)
+	const char* vtxSrc = R"(#version 330 core
+layout (location = 0) in vec3 aPos;
+void main(){ gl_Position = vec4(aPos, 1.0); })";
 
-		// 2) 그리기
-		glUseProgram(program);
+	const char* fragSrc = R"(#version 330 core
+out vec4 FragColor;
+uniform vec4 uColor;             // ← 선언
+void main(){ FragColor = uColor; }   // ← 사용
+)";
+
+	// 1) 컴파일 헬퍼 (람다)
+	auto compileShader = [](GLenum type, const char* src) {
+		GLuint sh = glCreateShader(type);
+		glShaderSource(sh, 1, &src, nullptr);
+		glCompileShader(sh);
+		GLint ok = 0; glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+		if (!ok) {
+			char log[512]; glGetShaderInfoLog(sh, 512, nullptr, log);
+			std::cerr << "Shader compile error: " << log << std::endl;
+		}
+		return sh;
+		};
+
+	// 2) 컴파일 & 링크
+	GLuint vtx = compileShader(GL_VERTEX_SHADER, vtxSrc);
+	GLuint frg = compileShader(GL_FRAGMENT_SHADER, fragSrc);
+
+	GLuint program = glCreateProgram();
+	glAttachShader(program, vtx);
+	glAttachShader(program, frg);
+	glLinkProgram(program);
+
+	GLint linked = 0; glGetProgramiv(program, GL_LINK_STATUS, &linked);
+	if (!linked) {
+		char log[512]; glGetProgramInfoLog(program, 512, nullptr, log);
+		std::cerr << "Program link error: " << log << std::endl;
+	}
+	glDeleteShader(vtx);
+	glDeleteShader(frg);
+
+	GLint colorLoc = glGetUniformLocation(program, "uColor");
+	std::cout << "dasd";
+	// 렌더 루프 안쪽
+	while (!glfwWindowShouldClose(window)) {
+		float t = (float)glfwGetTime();               // 경과 시간(초)
+		float g = 0.5f * std::sin(t) + 0.5f;          // 0~1 사이로 변환
+		glUseProgram(program);                           // (중요) 활성화 먼저
+		glUniform4f(colorLoc, 0.0f, g, 1.0f - g, 1.0f); // 파랑<->초록 계열 변화
 		glBindVertexArray(VAO);
-		glDrawArrays(GL_TRIANGLES, 0, 3); // 정점 3개로 삼각형 1개
-
-		// 3) 프레임 마무리
+		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 	}

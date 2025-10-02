@@ -1,9 +1,9 @@
 
-if (NOT EXISTS "C:/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-Debug/glfw_build/install_manifest.txt")
-    message(FATAL_ERROR "Cannot find install manifest: \"C:/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-Debug/glfw_build/install_manifest.txt\"")
+if (NOT EXISTS "D:/ProjectFiles/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-debug/glfw_build/install_manifest.txt")
+    message(FATAL_ERROR "Cannot find install manifest: \"D:/ProjectFiles/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-debug/glfw_build/install_manifest.txt\"")
 endif()
 
-file(READ "C:/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-Debug/glfw_build/install_manifest.txt" files)
+file(READ "D:/ProjectFiles/OpenGL/OpenGLLab/HelloTriangle/out/build/x64-debug/glfw_build/install_manifest.txt" files)
 string(REGEX REPLACE "\n" ";" files "${files}")
 
 foreach (file ${files})

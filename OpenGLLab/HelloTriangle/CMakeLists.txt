@@ -4,6 +4,10 @@ project(FirstOpenGL LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+message(STATUS "EXTERNAL_DIR = ${EXTERNAL_DIR}")
+message(STATUS "GLFW_DIR     = ${GLFW_DIR}")
+message(STATUS "GLAD_DIR     = ${GLAD_DIR}")
+
 # 상위 폴더의 external 경로 계산 (프로젝트 루트 바로 위에 external/가 있다고 가정)
 get_filename_component(EXTERNAL_DIR "${CMAKE_SOURCE_DIR}/../external" ABSOLUTE)
 set(GLFW_DIR "${EXTERNAL_DIR}/glfw-3.4")
