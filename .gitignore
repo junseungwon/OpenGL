@@ -1,0 +1,25 @@
+# Visual Studio files
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build folders
+Debug/
+Release/
+x64/
+x86/
+build/
+
+# Caches
+*.ipch
+*.VC.db
+*.VC.opendb
+*.obj
+*.pdb
+*.idb
+
+# Others
+*.log
+*.tmp
