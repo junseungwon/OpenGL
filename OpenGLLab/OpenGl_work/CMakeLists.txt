@@ -23,7 +23,7 @@ target_include_directories(stb_image_obj PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
 
 # 실행 파일
-add_executable(${PROJECT_NAME} src/main_Transform.cpp)
+add_executable(${PROJECT_NAME} src/main_position.cpp)
 
 # 포함 경로
 target_include_directories(${PROJECT_NAME} PRIVATE
