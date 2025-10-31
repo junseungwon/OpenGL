@@ -1,37 +1,52 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+
+#include <stb_image.h>
 #include <iostream>
-#include <fstream>
-#include <sstream>
-#include <string>
 #include <cmath>
-#include "stb_image.h"
 
 #include <glm.hpp>
 #include <gtc/matrix_transform.hpp>
 #include <gtc/type_ptr.hpp>
+
+#include "shader_m.h"	// 셰이더 유틸리티 클래스
+
+
+#pragma region 전역 함수
+void framebuffer_size_callback(GLFWwindow* window, int width, int height);
+void processInput(GLFWwindow* window);
+#pragma endregion
 
 #pragma region 전역변수
 
 static bool gUsePerspective = true;
 static bool gPrevP = false;
 
+
+//카메라 설정
 glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);   // 시작 위치
 glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);  // 정면 방향 (Z-방향)
 glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);  // 위쪽 벡터
 
+
+//프레임
 float deltaTime = 0.0f; // 현재 프레임과 마지막 프레임 사이의 시간
 float lastFrame = 0.0f; // 마지막 프레임 시간
 
+
+//카메라 회전
 float yaw = -90.0f; // Y축 회전 (기본 -Z방향)
 float pitch = 0.0f;  // X축 회전
 float lastX = 960.0f / 2.0f; // 창 크기 절반
 float lastY = 600.0f / 2.0f;
 bool firstMouse = true;
+
+
+// settings
+const unsigned int SCR_WIDTH = 800;
+const unsigned int SCR_HEIGHT = 600;
 #pragma endregion
 
- //전역 함수
-void mouse_callback(GLFWwindow* window, double xposIn, double yposIn);
 void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
 {
     float xpos = static_cast<float>(xposIn);
@@ -215,6 +230,9 @@ int main()
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "Failed to init GLAD\n"; return -1;
     }
+
+    // Shader는 컨텍스트/GLAD 이후에 생성해야 함
+    Shader ourShader("shaders/coordinate_systems.vs", "shaders/coordinate_systems.fs");
     glEnable(GL_DEPTH_TEST); // 깊이 테스트 활성화 (중요)
 
 
@@ -223,8 +241,6 @@ int main()
     deltaTime = currentFrame - lastFrame;
     lastFrame = currentFrame;
 
-    // 2) 셰이더
-    GLuint prog = CreateShaderProgramFromFiles("shaders/transform.vert", "shaders/transform.frag");
 
     // 3) 큐브 정점(위치 xyz + 색 rgb) 36개 (각 면 2삼각형*6면)
     float vertices[] = {
@@ -277,42 +293,60 @@ int main()
          -0.5f, 0.5f,-0.5f,  0.0f,1.0f
     };
 
-    GLuint vao, vbo;
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+    unsigned int VBO, VAO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
+    // layout(location=0) position
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
+    // layout(location=1) texcoord
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
-
-    // 색(1)
-    // 텍스처 파라미터 & 업로드
-    GLuint tex; glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
+    GLuint texture;
+    glGenTextures(1, &texture); // 텍스처 ID 생성
+    // texture1: container.jpg (RGB)
+    glBindTexture(GL_TEXTURE_2D, texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
+    int w, h, nc;
     stbi_set_flip_vertically_on_load(true);
-    int w, h, nc; unsigned char* data = stbi_load("assets/container.jpg", &w, &h, &nc, 0);
+    unsigned char* data = stbi_load("assets/textures/container.jpg", &w, &h, &nc, 0);
     if (data) {
-        GLenum fmt = (nc == 4) ? GL_RGBA : GL_RGB;
-        glTexImage2D(GL_TEXTURE_2D, 0, fmt, w, h, 0, fmt, GL_UNSIGNED_BYTE, data);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
         glGenerateMipmap(GL_TEXTURE_2D);
     }
     stbi_image_free(data);
-    // Uniform 위치
-    glUseProgram(prog);
-    glUniform1i(glGetUniformLocation(prog, "uTex"), 0);
-    GLint locModel = glGetUniformLocation(prog, "uModel");
-    GLint locView = glGetUniformLocation(prog, "uView");
-    GLint locProj = glGetUniformLocation(prog, "uProj");
+    GLuint texture2;
+    glGenTextures(1, &texture2); // 텍스처 ID 생성
+    // texture2: awesomeface.png (RGBA)
+    glBindTexture(GL_TEXTURE_2D, texture2);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    data = stbi_load("assets/textures/awesomeface.png", &w, &h, &nc, 0);
+    if (data) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    stbi_image_free(data);
+
+    // 샘플러 유닛 연결(한 번만)
+    ourShader.use();
+    ourShader.setInt("texture1", 0);
+    ourShader.setInt("texture2", 1);
+
 
     // 카메라/투영 기본값
     int width = 0, height = 0;
@@ -330,9 +364,7 @@ int main()
         // --- Model: 큐브를 회전시켜 변환 흐름을 관찰 ---
         float t = (float)glfwGetTime();
         glm::mat4 model(1.0f);
-        //model = glm::rotate(model, t * glm::radians(30.0f), glm::vec3(0.0f, 1.0f, 0.0f)); // Y축 회전
-        //model = glm::rotate(model, t * glm::radians(17.0f), glm::vec3(1.0f, 0.0f, 0.0f)); // X축 회전
-
+        
 
         // --- View: 현재 카메라 위치에서 바라보기 ---
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
@@ -348,16 +380,23 @@ int main()
             proj = glm::ortho(-s * aspect, s * aspect, -s, s, 0.1f, 100.0f);
         }
 
-        // 업로드(열우선: 전치 필요 없음 -> GL_FALSE)
-        glUseProgram(prog);
+
+
+        // ----- 렌더링 루프 내부 -----
+        ourShader.use();
+
+        // MVP 행렬 전달
+        ourShader.setMat4("model", model);
+        ourShader.setMat4("view", view);
+        ourShader.setMat4("projection", proj);
+
+        // 텍스처 활성화
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, tex);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, texture2);
 
-        glUniformMatrix4fv(locModel, 1, GL_FALSE, glm::value_ptr(model));
-        glUniformMatrix4fv(locView, 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(locProj, 1, GL_FALSE, glm::value_ptr(proj));
-
-        glBindVertexArray(vao);
+        glBindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLES, 0, 36);
 
         glfwSwapBuffers(window);
@@ -368,9 +407,8 @@ int main()
         glfwSetWindowTitle(window, title.c_str());
     }
 
-    glDeleteBuffers(1, &vbo);
-    glDeleteVertexArrays(1, &vao);
-    glDeleteProgram(prog);
+    glDeleteBuffers(1, &VBO);
+    glDeleteVertexArrays(1, &VAO);
 
     glfwDestroyWindow(window);
     glfwTerminate();
