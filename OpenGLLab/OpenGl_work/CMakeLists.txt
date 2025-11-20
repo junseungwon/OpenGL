@@ -9,6 +9,7 @@ get_filename_component(EXTERNAL_DIR "${CMAKE_SOURCE_DIR}/../external" ABSOLUTE)
 set(GLFW_DIR "${EXTERNAL_DIR}/glfw-3.4")
 set(GLAD_DIR "${EXTERNAL_DIR}/glad")
 set(GLM_DIR "${EXTERNAL_DIR}/glm")  # header-only
+set(IMGUI_DIR "${EXTERNAL_DIR}/imgui")
 
 # GLFW 빌드 (외부 소스를 서브디렉터리로 추가)
 add_subdirectory(${GLFW_DIR} ${CMAKE_BINARY_DIR}/glfw_build)
@@ -16,6 +17,27 @@ add_subdirectory(${GLFW_DIR} ${CMAKE_BINARY_DIR}/glfw_build)
 # GLAD 정적 라이브러리
 add_library(glad ${GLAD_DIR}/src/glad.c)
 target_include_directories(glad PUBLIC ${GLAD_DIR}/include)
+
+# ### ImGui 정적 라이브"imgui_lib" 생성 ###
+add_library(imgui_lib STATIC
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/imgui_demo.cpp 
+    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
+# ... imgui_lib 라이브러리 생성 코드 직후 ...
+target_include_directories(imgui_lib PUBLIC
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
+
+# imgui_lib는 glfw와 glad 타겟을 필요로 함
+target_link_libraries(imgui_lib PUBLIC glfw glad)
+
 
 # ── stb_image 구현 OBJECT 라이브러리 ──
 add_library(stb_image_obj OBJECT src/stb_image_impl.cpp)
@@ -34,9 +56,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 # 링크
 if (WIN32)
-  target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad opengl32 stb_image_obj)
+  # ### imgui_lib 추가 ###
+  target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad opengl32 stb_image_obj imgui_lib)
 else()
-  target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad stb_image_obj)
+  # ### imgui_lib 추가 ###
+  target_link_libraries(${PROJECT_NAME} PRIVATE glfw glad stb_image_obj imgui_lib)
 endif()
 
 # ── 셰이더 상대경로 지원: 빌드 후 shaders/를 실행 파일 폴더로 복사 ──
