@@ -178,12 +178,19 @@ private:
         {
             aiString str;
             mat->GetTexture(type, i, &str);
+            
+            // 디버깅: 텍스처 경로 정보 출력
+            std::cout << "[DEBUG] loadMaterialTextures - Type: " << typeName 
+                      << ", Original path from FBX: " << str.C_Str() 
+                      << ", Model directory: " << this->directory << std::endl;
+            
             // check if texture was loaded before and if so, continue to next iteration: skip loading a new texture
             bool skip = false;
             for(unsigned int j = 0; j < textures_loaded.size(); j++)
             {
                 if(std::strcmp(textures_loaded[j].path.data(), str.C_Str()) == 0)
                 {
+                    std::cout << "[DEBUG] Texture already loaded, skipping: " << str.C_Str() << std::endl;
                     textures.push_back(textures_loaded[j]);
                     skip = true; // a texture with the same filepath has already been loaded, continue to next one. (optimization)
                     break;
@@ -191,12 +198,19 @@ private:
             }
             if(!skip)
             {   // if texture hasn't been loaded already, load it
+                std::cout << "[DEBUG] Attempting to load new texture: " << str.C_Str() << std::endl;
                 Texture texture;
                 texture.id = TextureFromFile(str.C_Str(), this->directory);
                 texture.type = typeName;
                 texture.path = str.C_Str();
                 textures.push_back(texture);
                 textures_loaded.push_back(texture);  // store it as texture loaded for entire model, to ensure we won't unnecessary load duplicate textures.
+                
+                if (texture.id == 0) {
+                    std::cout << "[DEBUG] WARNING: Texture load returned ID 0 for: " << str.C_Str() << std::endl;
+                } else {
+                    std::cout << "[DEBUG] Texture loaded successfully, ID: " << texture.id << std::endl;
+                }
             }
         }
         return textures;
@@ -207,15 +221,39 @@ private:
 unsigned int TextureFromFile(const char *path, const string &directory, bool gamma)
 {
     string filename = string(path);
+    
+    // 디버깅: 원본 경로 정보
+    std::cout << "[DEBUG] TextureFromFile - Original path: " << path << std::endl;
+    std::cout << "[DEBUG] TextureFromFile - Directory: " << directory << std::endl;
+    
+    // 경로 구분자 통일: 백슬래시를 슬래시로 변환
+    std::replace(filename.begin(), filename.end(), '\\', '/');
+    
+    // 파일명만 추출 (마지막 / 또는 \ 이후 부분)
+    size_t lastSlash = filename.find_last_of("/\\");
+    if (lastSlash != string::npos) {
+        filename = filename.substr(lastSlash + 1);
+        std::cout << "[DEBUG] TextureFromFile - Extracted filename: " << filename << std::endl;
+    }
+    
+    // 디렉토리와 파일명 결합
     filename = directory + '/' + filename;
+    
+    // 디버깅: 최종 경로
+    std::cout << "[DEBUG] TextureFromFile - Final path: " << filename << std::endl;
 
     unsigned int textureID;
     glGenTextures(1, &textureID);
 
     int width, height, nrComponents;
+    std::cout << "[DEBUG] Attempting to load texture file: " << filename << std::endl;
     unsigned char *data = stbi_load(filename.c_str(), &width, &height, &nrComponents, 0);
     if (data)
     {
+        std::cout << "[DEBUG] Texture loaded successfully!" << std::endl;
+        std::cout << "[DEBUG]   - Size: " << width << "x" << height << std::endl;
+        std::cout << "[DEBUG]   - Channels: " << nrComponents << std::endl;
+        
         GLenum format;
         if (nrComponents == 1)
             format = GL_RED;
@@ -234,9 +272,13 @@ unsigned int TextureFromFile(const char *path, const string &directory, bool gam
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
         stbi_image_free(data);
+        std::cout << "[DEBUG] Texture ID generated: " << textureID << std::endl;
     }
     else
     {
+        std::cout << "[DEBUG] ERROR: Texture failed to load!" << std::endl;
+        std::cout << "[DEBUG]   - Original path: " << path << std::endl;
+        std::cout << "[DEBUG]   - Final path: " << filename << std::endl;
         std::cout << "Texture failed to load at path: " << path << std::endl;
         stbi_image_free(data);
     }

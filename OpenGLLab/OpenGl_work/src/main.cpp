@@ -149,7 +149,7 @@ int main() {
 
 	// === 여기서부터 모델 로딩 추가 코드임 ===
     // 프로젝트 기준 경로에 맞게 수정 가능함
-    Model nanosuit("assets/models/nanosuit/nanosuit.obj");
+    Model nanosuit("assets/models/Eemy/Model_04.fbx");
 
 	// 9. Shadow map FBO 및 텍스처 설정
 	setupShadowMap(gDepthMapFBO, gDepthMap);
@@ -711,7 +711,7 @@ void renderSceneGeometry(Shader& shader, unsigned int cubeVAO, Model* model)
     {
         glm::mat4 modelMat = glm::mat4(1.0f);
         modelMat = glm::translate(modelMat, glm::vec3(0.0f, -1.75f, 0.0f));
-        modelMat = glm::scale(modelMat, glm::vec3(0.2f));
+        modelMat = glm::scale(modelMat, glm::vec3(0.002f));
 
         shader.setMat4("model", modelMat);
         model->Draw(shader);
