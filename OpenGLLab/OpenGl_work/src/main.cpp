@@ -17,6 +17,9 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+
+#include "model.h"
+
 // 콜백 함수 선언
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
@@ -31,20 +34,25 @@ bool initGLAD();
 void setupCallbacks(GLFWwindow* window);
 void initImGui(GLFWwindow* window);
 void shutdownImGui();
-
+void setupShadowMap(unsigned int& depthMapFBO, unsigned int& depthMap);
 void setupCubeData(unsigned int& VBO, unsigned int& cubeVAO, unsigned int& lightVAO);
 unsigned int loadTexture2D(const char* path);
+glm::mat4 computeLightSpaceMatrix();
+void renderSceneGeometry(Shader& shader, unsigned int cubeVAO, Model* model);
 
 void buildImGuiUI();
 void drawScene(Shader& lightingShader,
-	Shader& lightCubeShader,
-	unsigned int cubeVAO,
-	unsigned int lightVAO,
-	unsigned int diffuseMap,
-	unsigned int specularMap);
+    Shader& lightCubeShader,
+    unsigned int cubeVAO,
+    unsigned int lightVAO,
+    unsigned int diffuseMap,
+    unsigned int specularMap,
+    Model* model,
+    unsigned int shadowMap,
+    const glm::mat4& lightSpaceMatrix);
 
 // settings
-const unsigned int SCR_WIDTH = 800;
+const unsigned int SCR_WIDTH  = 800;
 const unsigned int SCR_HEIGHT = 600;
 
 // camera
@@ -64,9 +72,17 @@ bool g_UiMode = false;
 glm::vec3 gLightPos(1.2f, 1.0f, 2.0f);
 glm::vec3 gLightColor(1.0f, 1.0f, 1.0f);
 
-float gAmbientStrength = 0.1f;
-float gDiffuseStrength = 1.0f;
+float gAmbientStrength  = 0.1f;
+float gDiffuseStrength  = 1.0f;
 float gSpecularStrength = 0.5f;
+
+
+
+// shadow mapping용 해상도 및 FBO/텍스처 전역 변수 선언
+const unsigned int SHADOW_WIDTH  = 1024;
+const unsigned int SHADOW_HEIGHT = 1024;
+unsigned int gDepthMapFBO = 0;
+unsigned int gDepthMap    = 0;
 
 // 월드 공간에서 큐브 위치들
 const glm::vec3 gCubePositions[] = {
@@ -107,6 +123,7 @@ int main() {
 	// 5. 쉐이더 생성
 	Shader lightingShader("shaders/basic_lighting_tex.vs", "shaders/basic_lighting_tex.fs");
 	Shader lightCubeShader("shaders/light_cube.vs", "shaders/light_cube.fs");
+	Shader depthShader("shaders/shadow_depth.vs", "shaders/shadow_depth.fs");
 
 	// 6. 깊이버퍼 사용
 	glEnable(GL_DEPTH_TEST);
@@ -116,8 +133,8 @@ int main() {
 	setupCubeData(VBO, cubeVAO, lightVAO);
 
 	// 8. 텍스처 로드 (diffuse, specular)
-	unsigned int diffuseMap = loadTexture2D("assets/Light.png");
-	unsigned int specularMap = loadTexture2D("assets/Light.png");
+	unsigned int diffuseMap  = loadTexture2D("assets/container2.png");
+	unsigned int specularMap = loadTexture2D("assets/container2_specular.png");
 
 	if (diffuseMap == 0 || specularMap == 0) {
 		std::cerr << "Texture load failed. Check assets paths.\n";
@@ -128,44 +145,68 @@ int main() {
 	lightingShader.setInt("material.diffuse", 0);
 	lightingShader.setInt("material.specular", 1);
 
+
+
+	// === 여기서부터 모델 로딩 추가 코드임 ===
+    // 프로젝트 기준 경로에 맞게 수정 가능함
+    Model nanosuit("assets/models/nanosuit/nanosuit.obj");
+
+	// 9. Shadow map FBO 및 텍스처 설정
+	setupShadowMap(gDepthMapFBO, gDepthMap);
+
 	// 렌더 루프
-	while (!glfwWindowShouldClose(window)) {
+while (!glfwWindowShouldClose(window)) {
 
-		// per-frame time logic
-		float currentFrame = static_cast<float>(glfwGetTime());
-		deltaTime = currentFrame - lastFrame;
-		lastFrame = currentFrame;
+    float currentFrame = static_cast<float>(glfwGetTime());
+    deltaTime = currentFrame - lastFrame;
+    lastFrame = currentFrame;
 
-		// 입력 처리
-		processInput(window);
+    processInput(window);
 
-		// ImGui 새 프레임
-		ImGui_ImplOpenGL3_NewFrame();
-		ImGui_ImplGlfw_NewFrame();
-		ImGui::NewFrame();
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+    buildImGuiUI();
 
-		// ImGui UI 코드 (창 구성)
-		buildImGuiUI();
+    // 카메라 내부 벡터 재계산 트릭
+    camera.ProcessMouseMovement(0.0f, 0.0f, true);
 
-		// 카메라 내부 벡터 재계산 트릭
-		camera.ProcessMouseMovement(0.0f, 0.0f, true);
+    // 0. 빛 시점 행렬 계산
+    glm::mat4 lightSpaceMatrix = computeLightSpaceMatrix();
 
-		// 화면/깊이버퍼 클리어
-		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    // 1패스: shadow map용 깊이 렌더링 패스 수행함
+    glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+    glBindFramebuffer(GL_FRAMEBUFFER, gDepthMapFBO);
+    glClear(GL_DEPTH_BUFFER_BIT);
 
-		// 3D 씬(큐브 + 광원) 렌더링
-		drawScene(lightingShader, lightCubeShader,
-			cubeVAO, lightVAO,
-			diffuseMap, specularMap);
+    depthShader.use();
+    depthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
-		// ImGui 렌더링
-		ImGui::Render();
-		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    // 큐브 + 모델 기하만 그리는 공용 함수 호출함
+    renderSceneGeometry(depthShader, cubeVAO, &nanosuit);
 
-		glfwSwapBuffers(window);
-		glfwPollEvents();
-	}
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // ===== 2패스: 실제 화면 렌더링 패스 수행함 =====
+    glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    drawScene(lightingShader, lightCubeShader,
+        cubeVAO, lightVAO,
+        diffuseMap, specularMap,
+        &nanosuit,
+        gDepthMap,           // shadow map 텍스처
+        lightSpaceMatrix);   // 빛 시점 행렬
+
+    // ImGui 렌더링
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    glfwSwapBuffers(window);
+    glfwPollEvents();
+}
+
 
 	// 정리 작업
 	glDeleteVertexArrays(1, &cubeVAO);
@@ -359,8 +400,8 @@ unsigned int loadTexture2D(const char* path)
 	{
 		GLenum format = (nrChannels == 3) ? GL_RGB : GL_RGBA;
 		glTexImage2D(GL_TEXTURE_2D, 0, format,
-			width, height, 0, format,
-			GL_UNSIGNED_BYTE, data);
+		             width, height, 0, format,
+		             GL_UNSIGNED_BYTE, data);
 		glGenerateMipmap(GL_TEXTURE_2D);
 	}
 	else
@@ -408,15 +449,15 @@ void buildImGuiUI()
 	ImGui::ColorEdit3("Light Color", glm::value_ptr(gLightColor));
 
 	// 각 계수
-	ImGui::SliderFloat("Ambient", &gAmbientStrength, 0.0f, 1.0f);
-	ImGui::SliderFloat("Diffuse", &gDiffuseStrength, 0.0f, 2.0f);
+	ImGui::SliderFloat("Ambient",  &gAmbientStrength,  0.0f, 1.0f);
+	ImGui::SliderFloat("Diffuse",  &gDiffuseStrength,  0.0f, 2.0f);
 	ImGui::SliderFloat("Specular", &gSpecularStrength, 0.0f, 2.0f);
 
 	if (ImGui::Button("Reset Light")) {
-		gLightPos = glm::vec3(1.2f, 1.0f, 2.0f);
-		gLightColor = glm::vec3(1.0f, 1.0f, 1.0f);
-		gAmbientStrength = 0.1f;
-		gDiffuseStrength = 1.0f;
+		gLightPos         = glm::vec3(1.2f, 1.0f, 2.0f);
+		gLightColor       = glm::vec3(1.0f, 1.0f, 1.0f);
+		gAmbientStrength  = 0.1f;
+		gDiffuseStrength  = 1.0f;
 		gSpecularStrength = 0.5f;
 	}
 
@@ -432,15 +473,22 @@ void drawScene(Shader& lightingShader,
 	unsigned int cubeVAO,
 	unsigned int lightVAO,
 	unsigned int diffuseMap,
-	unsigned int specularMap)
+	unsigned int specularMap,
+	Model* model,
+	unsigned int shadowMap,
+	const glm::mat4& lightSpaceMatrix)
 {
 	// 텍스처 바인딩
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, diffuseMap);
+
 	glActiveTexture(GL_TEXTURE1);
 	glBindTexture(GL_TEXTURE_2D, specularMap);
 
-	// 카메라 변환 행렬
+	glActiveTexture(GL_TEXTURE2);
+	glBindTexture(GL_TEXTURE_2D, shadowMap);
+
+	// 카메라 행렬
 	glm::mat4 projection = glm::perspective(
 		glm::radians(camera.Zoom),
 		(float)SCR_WIDTH / (float)SCR_HEIGHT,
@@ -448,17 +496,17 @@ void drawScene(Shader& lightingShader,
 	);
 	glm::mat4 view = camera.GetViewMatrix();
 
-	// ===== 조명 쉐이더 설정 =====
+	// 조명 쉐이더 설정
 	lightingShader.use();
 	lightingShader.setMat4("projection", projection);
 	lightingShader.setMat4("view", view);
+	lightingShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
-	// 조명/재질 유니폼 설정
 	lightingShader.setVec3("light.position", gLightPos);
 	lightingShader.setVec3("viewPos", camera.Position);
 
-	glm::vec3 diffuseColor = gLightColor * gDiffuseStrength;
-	glm::vec3 ambientColor = diffuseColor * gAmbientStrength;
+	glm::vec3 diffuseColor  = gLightColor * gDiffuseStrength;
+	glm::vec3 ambientColor  = diffuseColor * gAmbientStrength;
 	glm::vec3 specularColor = gLightColor * gSpecularStrength;
 
 	lightingShader.setVec3("light.ambient", ambientColor);
@@ -467,21 +515,15 @@ void drawScene(Shader& lightingShader,
 
 	lightingShader.setFloat("material.shininess", 32.0f);
 
-	// 큐브 그리기
-	glBindVertexArray(cubeVAO);
+	// 텍스처 유닛 연결
+	lightingShader.setInt("material.diffuse", 0);
+	lightingShader.setInt("material.specular", 1);
+	lightingShader.setInt("shadowMap", 2);
 
-	for (unsigned int i = 0; i < gCubeCount; i++)
-	{
-		glm::mat4 model = glm::mat4(1.0f);
-		model = glm::translate(model, gCubePositions[i]);
-		float angle = 20.0f * i;
-		model = glm::rotate(model, glm::radians(angle), glm::vec3(1.0f, 0.3f, 0.5f));
-		lightingShader.setMat4("model", model);
+	// 큐브 + 모델 실제 기하 렌더링
+	renderSceneGeometry(lightingShader, cubeVAO, model);
 
-		glDrawArrays(GL_TRIANGLES, 0, 36);
-	}
-
-	// ===== 광원 큐브 렌더링 =====
+	// 광원 큐브 렌더링
 	lightCubeShader.use();
 	lightCubeShader.setMat4("projection", projection);
 	lightCubeShader.setMat4("view", view);
@@ -493,6 +535,7 @@ void drawScene(Shader& lightingShader,
 
 	glBindVertexArray(lightVAO);
 	glDrawArrays(GL_TRIANGLES, 0, 36);
+	glBindVertexArray(0);
 }
 
 // ==========================================
@@ -589,4 +632,110 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
 	ImGui_ImplGlfw_MouseButtonCallback(window, button, action, mods); // ImGui에 전달
+}
+
+
+//그림자 전용 함수
+
+void setupShadowMap(unsigned int& depthMapFBO, unsigned int& depthMap)
+{
+    // FBO 생성
+    glGenFramebuffers(1, &depthMapFBO);
+
+    // 깊이 텍스처 생성
+    glGenTextures(1, &depthMap);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_DEPTH_COMPONENT,
+        SHADOW_WIDTH, SHADOW_HEIGHT,
+        0,
+        GL_DEPTH_COMPONENT,
+        GL_FLOAT,
+        nullptr
+    );
+
+    // 필터 / 래핑 설정
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+
+    // FBO에 깊이 텍스처 부착
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glFramebufferTexture2D(
+        GL_FRAMEBUFFER,
+        GL_DEPTH_ATTACHMENT,
+        GL_TEXTURE_2D,
+        depthMap,
+        0
+    );
+
+    // 컬러 버퍼 비활성화
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0); 
+    //사용자 정의 FBO 사용 종료
+		//다시 윈도우 화면에 그리기 시작
+}
+
+void renderSceneGeometry(Shader& shader, unsigned int cubeVAO, Model* model)
+{
+    // 큐브 렌더링
+    glBindVertexArray(cubeVAO);
+
+    for (unsigned int i = 0; i < gCubeCount; i++)
+    {
+        glm::mat4 modelMat = glm::mat4(1.0f);
+        modelMat = glm::translate(modelMat, gCubePositions[i]);
+        float angle = 20.0f * i;
+        modelMat = glm::rotate(
+            modelMat,
+            glm::radians(angle),
+            glm::vec3(1.0f, 0.3f, 0.5f)
+        );
+        shader.setMat4("model", modelMat);
+
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+    }
+
+    glBindVertexArray(0);
+
+    // Assimp로 로딩한 3D 모델 렌더링
+    if (model)
+    {
+        glm::mat4 modelMat = glm::mat4(1.0f);
+        modelMat = glm::translate(modelMat, glm::vec3(0.0f, -1.75f, 0.0f));
+        modelMat = glm::scale(modelMat, glm::vec3(0.2f));
+
+        shader.setMat4("model", modelMat);
+        model->Draw(shader);
+    }
+}
+
+// 빛 시점 행렬(light-space matrix) 계산 함수
+glm::mat4 computeLightSpaceMatrix()
+{
+    // 방향광처럼 사용하기 위한 직교 투영 설정임
+    float near_plane = 1.0f;
+    float far_plane  = 25.0f;
+    glm::mat4 lightProjection = glm::ortho(
+        -10.0f, 10.0f,
+        -10.0f, 10.0f,
+        near_plane, far_plane
+    );
+
+    // 조명 위치에서 원점을 바라보는 view 행렬 설정임
+    glm::mat4 lightView = glm::lookAt(
+        gLightPos,
+        glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+
+    return lightProjection * lightView;
 }
