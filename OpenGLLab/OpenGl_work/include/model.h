@@ -1,6 +1,10 @@
 #ifndef MODEL_H
 #define MODEL_H
 
+#ifndef GLM_ENABLE_EXPERIMENTAL
+#define GLM_ENABLE_EXPERIMENTAL
+#endif
+
 #include <glad/glad.h> 
 
 #include <glm.hpp>
@@ -13,6 +17,8 @@
 
 #include <mesh.h>
 #include <shader_m.h>
+#include <animdata.h>
+#include <assimp_glm_helpers.h>
 
 #include <string>
 #include <fstream>
@@ -20,6 +26,7 @@
 #include <iostream>
 #include <map>
 #include <vector>
+#include <algorithm>
 using namespace std;
 
 unsigned int TextureFromFile(const char *path, const string &directory, bool gamma = false);
@@ -32,6 +39,8 @@ public:
     vector<Mesh>    meshes;
     string directory;
     bool gammaCorrection;
+    map<string, BoneInfo> m_BoneInfoMap;
+    int m_BoneCounter = 0;
 
     // constructor, expects a filepath to a 3D model.
     Model(string const &path, bool gamma = false) : gammaCorrection(gamma)
@@ -45,6 +54,9 @@ public:
         for(unsigned int i = 0; i < meshes.size(); i++)
             meshes[i].Draw(shader);
     }
+
+    map<string, BoneInfo>& GetBoneInfoMap() { return m_BoneInfoMap; }
+    int& GetBoneCount() { return m_BoneCounter; }
     
 private:
     // loads a model with supported ASSIMP extensions from file and stores the resulting meshes in the meshes vector.
@@ -97,6 +109,7 @@ private:
         {
             Vertex vertex;
             glm::vec3 vector; // we declare a placeholder vector since assimp uses its own vector class that doesn't directly convert to glm's vec3 class so we transfer the data to this placeholder glm::vec3 first.
+            SetVertexBoneDataToDefault(vertex);
             // positions
             vector.x = mesh->mVertices[i].x;
             vector.y = mesh->mVertices[i].y;
@@ -135,6 +148,8 @@ private:
 
             vertices.push_back(vertex);
         }
+        // bone weights
+        ExtractBoneWeightForVertices(vertices, mesh, scene);
         // now wak through each of the mesh's faces (a face is a mesh its triangle) and retrieve the corresponding vertex indices.
         for(unsigned int i = 0; i < mesh->mNumFaces; i++)
         {
@@ -167,6 +182,57 @@ private:
         
         // return a mesh object created from the extracted mesh data
         return Mesh(vertices, indices, textures);
+    }
+
+    void SetVertexBoneDataToDefault(Vertex& vertex)
+    {
+        for (int i = 0; i < MAX_BONE_INFLUENCE; i++)
+        {
+            vertex.m_BoneIDs[i] = -1;
+            vertex.m_Weights[i] = 0.0f;
+        }
+    }
+
+    void SetVertexBoneData(Vertex& vertex, int boneID, float weight)
+    {
+        for (int i = 0; i < MAX_BONE_INFLUENCE; ++i)
+        {
+            if (vertex.m_BoneIDs[i] < 0)
+            {
+                vertex.m_BoneIDs[i] = boneID;
+                vertex.m_Weights[i] = weight;
+                return;
+            }
+        }
+        // if more than MAX_BONE_INFLUENCE influences, ignore extras
+    }
+
+    void ExtractBoneWeightForVertices(vector<Vertex>& vertices, aiMesh* mesh, const aiScene* scene)
+    {
+        for (unsigned int boneIndex = 0; boneIndex < mesh->mNumBones; ++boneIndex)
+        {
+            string boneName = mesh->mBones[boneIndex]->mName.C_Str();
+
+            if (m_BoneInfoMap.find(boneName) == m_BoneInfoMap.end())
+            {
+                BoneInfo newBoneInfo;
+                newBoneInfo.id = m_BoneCounter;
+                newBoneInfo.offset = AssimpGLMHelpers::ConvertMatrixToGLMFormat(mesh->mBones[boneIndex]->mOffsetMatrix);
+                m_BoneInfoMap[boneName] = newBoneInfo;
+                m_BoneCounter++;
+            }
+
+            int boneID = m_BoneInfoMap[boneName].id;
+            auto weights = mesh->mBones[boneIndex]->mWeights;
+            int numWeights = mesh->mBones[boneIndex]->mNumWeights;
+
+            for (int weightIndex = 0; weightIndex < numWeights; ++weightIndex)
+            {
+                int vertexId = weights[weightIndex].mVertexId;
+                float weight = weights[weightIndex].mWeight;
+                SetVertexBoneData(vertices[vertexId], boneID, weight);
+            }
+        }
     }
 
     // checks all material textures of a given type and loads the textures if they're not loaded yet.
@@ -218,7 +284,7 @@ private:
 };
 
 
-unsigned int TextureFromFile(const char *path, const string &directory, bool gamma)
+inline unsigned int TextureFromFile(const char *path, const string &directory, bool gamma)
 {
     string filename = string(path);
     

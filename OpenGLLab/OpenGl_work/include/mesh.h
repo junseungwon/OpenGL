@@ -1,6 +1,10 @@
 #ifndef MESH_H
 #define MESH_H
 
+#ifndef GLM_ENABLE_EXPERIMENTAL
+#define GLM_ENABLE_EXPERIMENTAL
+#endif
+
 #include <glad/glad.h> // holds all OpenGL type declarations
 
 #include <glm.hpp>
@@ -32,6 +36,7 @@ struct Vertex {
 };
 
 struct Texture {
+    Texture() : id(0) {}
     unsigned int id;
     string type;
     string path;

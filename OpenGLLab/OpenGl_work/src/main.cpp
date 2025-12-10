@@ -1,6 +1,10 @@
 ﻿#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
+#ifndef GLM_ENABLE_EXPERIMENTAL
+#define GLM_ENABLE_EXPERIMENTAL
+#endif
+
 #include <stb_image.h>
 #include <iostream>
 #include <cmath>
@@ -14,6 +18,8 @@
 
 #include "shader_m.h"	// 셰이더 유틸리티 클래스
 #include "camera.h"    // 카메라 클래스
+#include "animation.h"
+#include "animator.h"
 
 // ImGui 헤더
 #include <imgui.h>
@@ -43,16 +49,18 @@ unsigned int loadTexture2D(const char* path);
 unsigned int loadCubemap(const std::vector<std::string>& faces);
 void setupSkyboxData(unsigned int& skyboxVAO, unsigned int& skyboxVBO);
 glm::mat4 computeLightSpaceMatrix();
-void renderSceneGeometry(Shader& shader, unsigned int cubeVAO, Model* model);
+void renderCubes(Shader& shader, unsigned int cubeVAO);
 
 void buildImGuiUI();
 void drawScene(Shader& lightingShader,
+    Shader& skinnedShader,
     Shader& lightCubeShader,
     unsigned int cubeVAO,
     unsigned int lightVAO,
     unsigned int diffuseMap,
     unsigned int specularMap,
     Model* model,
+    Animator& animator,
     unsigned int shadowMap,
     const glm::mat4& lightSpaceMatrix);
 
@@ -129,6 +137,8 @@ int main() {
 	Shader lightingShader("shaders/basic_lighting_tex.vs", "shaders/basic_lighting_tex.fs");
 	Shader lightCubeShader("shaders/light_cube.vs", "shaders/light_cube.fs");
 	Shader depthShader("shaders/shadow_depth.vs", "shaders/shadow_depth.fs");
+	Shader skinnedShader("shaders/animated_model.vs", "shaders/animated_model.fs");
+	Shader depthAnimShader("shaders/shadow_depth_anim.vs", "shaders/shadow_depth.fs");
 	Shader skyboxShader("shaders/skybox.vs", "shaders/skybox.fs");
 
 	// 6. 깊이버퍼 사용
@@ -168,9 +178,21 @@ int main() {
 
 
 
-	// === 여기서부터 모델 로딩 추가 코드임 ===
-    // 프로젝트 기준 경로에 맞게 수정 가능함
-    Model nanosuit("assets/models/Eemy/Model_04.fbx");
+    // === 모델 및 애니메이션 로딩 ===
+    // IdleMonster.fbx에 메시 + 기본 애니메이션 포함
+    Model nanosuit("assets/models/Eemy/IdleMonster.fbx");
+    Animation idleAnim("assets/models/Eemy/IdleMonster.fbx", &nanosuit);
+
+    // 추가 애니메이션: 동일 리깅의 다른 FBX를 로드해 10초 후 전환합니다.
+    // 파일명을 원하는 애니메이션 FBX로 교체하세요.
+    Animation altAnim("assets/models/Eemy/AltAnim.fbx", &nanosuit);
+    float altDurationSec = altAnim.GetDuration() / std::max(altAnim.GetTicksPerSecond(), 1.0f);
+    if (altDurationSec <= 0.0f) altDurationSec = 1.0f; // 안전장치
+
+    Animator animator(&idleAnim);
+
+    bool attackPlaying = false;
+    float altPlayTimer = 0.0f; // 대체 애니메이션 유지 시간
 
 	// 9. Shadow map FBO 및 텍스처 설정
 	setupShadowMap(gDepthMapFBO, gDepthMap);
@@ -192,6 +214,35 @@ while (!glfwWindowShouldClose(window)) {
     // 카메라 내부 벡터 재계산 트릭
     camera.ProcessMouseMovement(0.0f, 0.0f, true);
 
+    // 애니메이션 업데이트
+    animator.UpdateAnimation(deltaTime);
+
+	// 스페이스 키로 공격(altAnim) 트리거, 재생이 끝나면 idle로 복귀
+	static int prevSpaceState = GLFW_RELEASE;
+	int spaceState = glfwGetKey(window, GLFW_KEY_SPACE);
+	bool spacePressed = (spaceState == GLFW_PRESS && prevSpaceState == GLFW_RELEASE);
+	prevSpaceState = spaceState;
+
+	// ImGui가 키보드를 잡고 있거나 UI 모드면 무시
+	bool blockInput = g_UiMode || ImGui::GetIO().WantCaptureKeyboard;
+
+	if (!blockInput && spacePressed && !attackPlaying)
+	{
+		animator.PlayAnimation(&altAnim);
+		attackPlaying = true;
+		altPlayTimer = 0.0f;
+	}
+
+	if (attackPlaying)
+	{
+		altPlayTimer += deltaTime;
+		if (altPlayTimer >= altDurationSec)
+		{
+			animator.PlayAnimation(&idleAnim);
+			attackPlaying = false;
+		}
+	}
+
     // 0. 빛 시점 행렬 계산
     glm::mat4 lightSpaceMatrix = computeLightSpaceMatrix();
 
@@ -203,8 +254,25 @@ while (!glfwWindowShouldClose(window)) {
     depthShader.use();
     depthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
-    // 큐브 + 모델 기하만 그리는 공용 함수 호출함
-    renderSceneGeometry(depthShader, cubeVAO, &nanosuit);
+    // 큐브 깊이 렌더
+    renderCubes(depthShader, cubeVAO);
+
+    // 애니메이션 모델 깊이 렌더
+    depthAnimShader.use();
+    depthAnimShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+    {
+        glm::mat4 modelMat = glm::mat4(1.0f);
+        modelMat = glm::translate(modelMat, glm::vec3(0.0f, -1.75f, 0.0f));
+        modelMat = glm::scale(modelMat, glm::vec3(0.002f));
+        depthAnimShader.setMat4("model", modelMat);
+
+        auto transforms = animator.GetFinalBoneMatrices();
+        for (size_t i = 0; i < transforms.size(); ++i)
+        {
+            depthAnimShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", transforms[i]);
+        }
+        nanosuit.Draw(depthAnimShader);
+    }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -213,10 +281,10 @@ while (!glfwWindowShouldClose(window)) {
     glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    drawScene(lightingShader, lightCubeShader,
+    drawScene(lightingShader, skinnedShader, lightCubeShader,
         cubeVAO, lightVAO,
         diffuseMap, specularMap,
-        &nanosuit,
+        &nanosuit, animator,
         gDepthMap,           // shadow map 텍스처
         lightSpaceMatrix);   // 빛 시점 행렬
 
@@ -622,12 +690,14 @@ void buildImGuiUI()
 // ==========================================
 
 void drawScene(Shader& lightingShader,
+	Shader& skinnedShader,
 	Shader& lightCubeShader,
 	unsigned int cubeVAO,
 	unsigned int lightVAO,
 	unsigned int diffuseMap,
 	unsigned int specularMap,
 	Model* model,
+	Animator& animator,
 	unsigned int shadowMap,
 	const glm::mat4& lightSpaceMatrix)
 {
@@ -673,8 +743,37 @@ void drawScene(Shader& lightingShader,
 	lightingShader.setInt("material.specular", 1);
 	lightingShader.setInt("shadowMap", 2);
 
-	// 큐브 + 모델 실제 기하 렌더링
-	renderSceneGeometry(lightingShader, cubeVAO, model);
+	// 큐브 실제 기하 렌더링
+	renderCubes(lightingShader, cubeVAO);
+
+	// 스키닝 모델 렌더링
+	if (model)
+	{
+		skinnedShader.use();
+		skinnedShader.setMat4("projection", projection);
+		skinnedShader.setMat4("view", view);
+		skinnedShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+		skinnedShader.setVec3("light.position", gLightPos);
+		skinnedShader.setVec3("viewPos", camera.Position);
+		skinnedShader.setVec3("light.ambient", ambientColor);
+		skinnedShader.setVec3("light.diffuse", diffuseColor);
+		skinnedShader.setVec3("light.specular", specularColor);
+		skinnedShader.setFloat("shininess", 32.0f);
+		skinnedShader.setInt("texture_diffuse1", 0);
+		skinnedShader.setInt("texture_specular1", 1);
+		skinnedShader.setInt("shadowMap", 2);
+
+		glm::mat4 modelMat = glm::mat4(1.0f);
+		modelMat = glm::translate(modelMat, glm::vec3(0.0f, -1.75f, 0.0f));
+		modelMat = glm::scale(modelMat, glm::vec3(0.002f));
+		skinnedShader.setMat4("model", modelMat);
+
+		auto transforms = animator.GetFinalBoneMatrices();
+		for (size_t i = 0; i < transforms.size(); ++i)
+			skinnedShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", transforms[i]);
+
+		model->Draw(skinnedShader);
+	}
 
 	// 광원 큐브 렌더링
 	lightCubeShader.use();
@@ -837,7 +936,7 @@ void setupShadowMap(unsigned int& depthMapFBO, unsigned int& depthMap)
 		//다시 윈도우 화면에 그리기 시작
 }
 
-void renderSceneGeometry(Shader& shader, unsigned int cubeVAO, Model* model)
+void renderCubes(Shader& shader, unsigned int cubeVAO)
 {
     // 큐브 렌더링
     glBindVertexArray(cubeVAO);
@@ -858,17 +957,6 @@ void renderSceneGeometry(Shader& shader, unsigned int cubeVAO, Model* model)
     }
 
     glBindVertexArray(0);
-
-    // Assimp로 로딩한 3D 모델 렌더링
-    if (model)
-    {
-        glm::mat4 modelMat = glm::mat4(1.0f);
-        modelMat = glm::translate(modelMat, glm::vec3(0.0f, -1.75f, 0.0f));
-        modelMat = glm::scale(modelMat, glm::vec3(0.002f));
-
-        shader.setMat4("model", modelMat);
-        model->Draw(shader);
-    }
 }
 
 // 빛 시점 행렬(light-space matrix) 계산 함수
