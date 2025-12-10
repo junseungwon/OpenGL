@@ -4,6 +4,9 @@
 #include <stb_image.h>
 #include <iostream>
 #include <cmath>
+#include <vector>
+#include <string>
+#include <algorithm>
 
 #include <glm.hpp>
 #include <gtc/matrix_transform.hpp>
@@ -37,6 +40,8 @@ void shutdownImGui();
 void setupShadowMap(unsigned int& depthMapFBO, unsigned int& depthMap);
 void setupCubeData(unsigned int& VBO, unsigned int& cubeVAO, unsigned int& lightVAO);
 unsigned int loadTexture2D(const char* path);
+unsigned int loadCubemap(const std::vector<std::string>& faces);
+void setupSkyboxData(unsigned int& skyboxVAO, unsigned int& skyboxVBO);
 glm::mat4 computeLightSpaceMatrix();
 void renderSceneGeometry(Shader& shader, unsigned int cubeVAO, Model* model);
 
@@ -124,6 +129,7 @@ int main() {
 	Shader lightingShader("shaders/basic_lighting_tex.vs", "shaders/basic_lighting_tex.fs");
 	Shader lightCubeShader("shaders/light_cube.vs", "shaders/light_cube.fs");
 	Shader depthShader("shaders/shadow_depth.vs", "shaders/shadow_depth.fs");
+	Shader skyboxShader("shaders/skybox.vs", "shaders/skybox.fs");
 
 	// 6. 깊이버퍼 사용
 	glEnable(GL_DEPTH_TEST);
@@ -131,6 +137,21 @@ int main() {
 	// 7. 정점 데이터, VAO/VBO, 광원용 VAO 설정
 	unsigned int VBO = 0, cubeVAO = 0, lightVAO = 0;
 	setupCubeData(VBO, cubeVAO, lightVAO);
+
+	// Skybox VAO/VBO 및 큐브맵 텍스처
+	unsigned int skyboxVAO = 0, skyboxVBO = 0;
+	setupSkyboxData(skyboxVAO, skyboxVBO);
+	std::vector<std::string> skyboxFaces = {
+		"assets/skybox/right.hdr",
+		"assets/skybox/left.hdr",
+		"assets/skybox/top.hdr",
+		"assets/skybox/bottom.hdr",
+		"assets/skybox/front.hdr",
+		"assets/skybox/back.hdr"
+	};
+	unsigned int cubemapTexture = loadCubemap(skyboxFaces);
+	skyboxShader.use();
+	skyboxShader.setInt("skybox", 0);
 
 	// 8. 텍스처 로드 (diffuse, specular)
 	unsigned int diffuseMap  = loadTexture2D("assets/container2.png");
@@ -198,6 +219,20 @@ while (!glfwWindowShouldClose(window)) {
         &nanosuit,
         gDepthMap,           // shadow map 텍스처
         lightSpaceMatrix);   // 빛 시점 행렬
+
+	// Skybox 렌더링 (항상 마지막, 깊이 함수 변경)
+	glDepthFunc(GL_LEQUAL);
+	skyboxShader.use();
+	glm::mat4 view = glm::mat4(glm::mat3(camera.GetViewMatrix())); // 위치 이동 제거
+	glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+	skyboxShader.setMat4("view", view);
+	skyboxShader.setMat4("projection", projection);
+	glBindVertexArray(skyboxVAO);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+	glDrawArrays(GL_TRIANGLES, 0, 36);
+	glBindVertexArray(0);
+	glDepthFunc(GL_LESS);
 
     // ImGui 렌더링
     ImGui::Render();
@@ -410,6 +445,124 @@ unsigned int loadTexture2D(const char* path)
 		textureID = 0; // 실패 표시
 	}
 	stbi_image_free(data);
+
+	return textureID;
+}
+
+// ==========================================
+// Skybox 설정 함수
+// ==========================================
+
+void setupSkyboxData(unsigned int& skyboxVAO, unsigned int& skyboxVBO)
+{
+	float skyboxVertices[] = {
+		// positions          
+		-1.0f,  1.0f, -1.0f,
+		-1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+		 1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+
+		-1.0f, -1.0f,  1.0f,
+		-1.0f, -1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f,  1.0f,
+		-1.0f, -1.0f,  1.0f,
+
+		 1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+
+		-1.0f, -1.0f,  1.0f,
+		-1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f, -1.0f,  1.0f,
+		-1.0f, -1.0f,  1.0f,
+
+		-1.0f,  1.0f, -1.0f,
+		 1.0f,  1.0f, -1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		-1.0f,  1.0f,  1.0f,
+		-1.0f,  1.0f, -1.0f,
+
+		-1.0f, -1.0f, -1.0f,
+		-1.0f, -1.0f,  1.0f,
+		 1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+		-1.0f, -1.0f,  1.0f,
+		 1.0f, -1.0f,  1.0f
+	};
+
+	glGenVertexArrays(1, &skyboxVAO);
+	glGenBuffers(1, &skyboxVBO);
+	glBindVertexArray(skyboxVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), &skyboxVertices, GL_STATIC_DRAW);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	glBindVertexArray(0);
+}
+
+unsigned int loadCubemap(const std::vector<std::string>& faces)
+{
+	auto isHDR = [](const std::string& path) {
+		auto lower = path;
+		std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return lower.rfind(".hdr") != std::string::npos || lower.rfind(".exr") != std::string::npos;
+	};
+
+	unsigned int textureID;
+	glGenTextures(1, &textureID);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
+
+	int width = 0, height = 0, nrChannels = 0;
+	stbi_set_flip_vertically_on_load(false); // 큐브맵은 뒤집지 않음
+
+	for (unsigned int i = 0; i < faces.size(); i++)
+	{
+		if (isHDR(faces[i]))
+		{
+			float* data = stbi_loadf(faces[i].c_str(), &width, &height, &nrChannels, 0);
+			if (data)
+			{
+				GLenum format = (nrChannels == 4) ? GL_RGBA : GL_RGB;
+				GLenum internalFormat = (nrChannels == 4) ? GL_RGBA16F : GL_RGB16F;
+				glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, internalFormat, width, height, 0, format, GL_FLOAT, data);
+				stbi_image_free(data);
+			}
+			else
+			{
+				std::cout << "Failed to load HDR cubemap texture: " << faces[i] << std::endl;
+			}
+		}
+		else
+		{
+			unsigned char* data = stbi_load(faces[i].c_str(), &width, &height, &nrChannels, 0);
+			if (data)
+			{
+				GLenum format = (nrChannels == 4) ? GL_RGBA : GL_RGB;
+				glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+				stbi_image_free(data);
+			}
+			else
+			{
+				std::cout << "Failed to load cubemap texture: " << faces[i] << std::endl;
+			}
+		}
+	}
+
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
 	return textureID;
 }
