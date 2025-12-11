@@ -230,7 +230,15 @@ private:
             {
                 int vertexId = weights[weightIndex].mVertexId;
                 float weight = weights[weightIndex].mWeight;
-                SetVertexBoneData(vertices[vertexId], boneID, weight);
+                if (vertexId >= 0 && static_cast<size_t>(vertexId) < vertices.size())
+                {
+                    SetVertexBoneData(vertices[vertexId], boneID, weight);
+                }
+                else
+                {
+                    // 안전장치: 잘못된 인덱스는 무시
+                    // printf("Warning: bone weight vertexId out of range: %d (size=%zu)\n", vertexId, vertices.size());
+                }
             }
         }
     }
@@ -265,17 +273,45 @@ private:
             if(!skip)
             {   // if texture hasn't been loaded already, load it
                 std::cout << "[DEBUG] Attempting to load new texture: " << str.C_Str() << std::endl;
-                Texture texture;
-                texture.id = TextureFromFile(str.C_Str(), this->directory);
-                texture.type = typeName;
-                texture.path = str.C_Str();
-                textures.push_back(texture);
-                textures_loaded.push_back(texture);  // store it as texture loaded for entire model, to ensure we won't unnecessary load duplicate textures.
-                
-                if (texture.id == 0) {
-                    std::cout << "[DEBUG] WARNING: Texture load returned ID 0 for: " << str.C_Str() << std::endl;
-                } else {
+
+                // 파일명만 추출하여 동일한 이름 패턴을 가진 파일을 우선 검색 (예: maria_diffuse.png vs maria_diffuse 1.png)
+                std::string requested = str.C_Str();
+                size_t slash = requested.find_last_of("/\\");
+                std::string fname = (slash == std::string::npos) ? requested : requested.substr(slash + 1);
+
+                auto tryLoad = [&](const std::string& name)->Texture {
+                    Texture tex;
+                    tex.id = TextureFromFile(name.c_str(), this->directory);
+                    tex.type = typeName;
+                    tex.path = name;
+                    return tex;
+                };
+
+                Texture texture = tryLoad(fname);
+                if (texture.id == 0)
+                {
+                    // fallback: "_1" 또는 " 1" 변형 시도
+                    // 우선 " base 1.ext"
+                    std::string base = fname;
+                    std::string ext = "";
+                    size_t dot = fname.find_last_of('.');
+                    if (dot != std::string::npos) {
+                        base = fname.substr(0, dot);
+                        ext = fname.substr(dot);
+                    }
+                    // 시도 1: base + " 1" + ext
+                    texture = tryLoad(base + " 1" + ext);
+                    // 시도 2: base + "_1" + ext
+                    if (texture.id == 0)
+                        texture = tryLoad(base + "_1" + ext);
+                }
+
+                if (texture.id != 0) {
                     std::cout << "[DEBUG] Texture loaded successfully, ID: " << texture.id << std::endl;
+                    textures.push_back(texture);
+                    textures_loaded.push_back(texture);
+                } else {
+                    std::cout << "[DEBUG] WARNING: Texture load returned ID 0 for: " << str.C_Str() << std::endl;
                 }
             }
         }
@@ -311,15 +347,12 @@ inline unsigned int TextureFromFile(const char *path, const string &directory, b
     unsigned int textureID;
     glGenTextures(1, &textureID);
 
-    int width, height, nrComponents;
-    std::cout << "[DEBUG] Attempting to load texture file: " << filename << std::endl;
-    unsigned char *data = stbi_load(filename.c_str(), &width, &height, &nrComponents, 0);
-    if (data)
-    {
-        std::cout << "[DEBUG] Texture loaded successfully!" << std::endl;
-        std::cout << "[DEBUG]   - Size: " << width << "x" << height << std::endl;
-        std::cout << "[DEBUG]   - Channels: " << nrComponents << std::endl;
-        
+    auto tryLoad = [&](const std::string& pathToTry) -> bool {
+        int width, height, nrComponents;
+        std::cout << "[DEBUG] Attempting to load texture file: " << pathToTry << std::endl;
+        unsigned char* data = stbi_load(pathToTry.c_str(), &width, &height, &nrComponents, 0);
+        if (!data) return false;
+
         GLenum format;
         if (nrComponents == 1)
             format = GL_RED;
@@ -327,6 +360,8 @@ inline unsigned int TextureFromFile(const char *path, const string &directory, b
             format = GL_RGB;
         else if (nrComponents == 4)
             format = GL_RGBA;
+        else
+            format = GL_RGB;
 
         glBindTexture(GL_TEXTURE_2D, textureID);
         glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
@@ -338,15 +373,46 @@ inline unsigned int TextureFromFile(const char *path, const string &directory, b
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
         stbi_image_free(data);
+        std::cout << "[DEBUG] Texture loaded successfully!" << std::endl;
+        std::cout << "[DEBUG]   - Size: " << width << "x" << height << std::endl;
+        std::cout << "[DEBUG]   - Channels: " << nrComponents << std::endl;
         std::cout << "[DEBUG] Texture ID generated: " << textureID << std::endl;
+        return true;
+    };
+
+    bool loaded = tryLoad(filename);
+
+    // 파일 이름에 공백+1 버전 시도 (예: foo.png -> foo 1.png)
+    if (!loaded)
+    {
+        size_t dot = filename.find_last_of('.');
+        if (dot != std::string::npos)
+        {
+            std::string base = filename.substr(0, dot);
+            std::string ext = filename.substr(dot);
+            std::string alt = base + " 1" + ext;
+            if (alt != filename)
+                loaded = tryLoad(alt);
+        }
     }
-    else
+
+    if (!loaded)
     {
         std::cout << "[DEBUG] ERROR: Texture failed to load!" << std::endl;
         std::cout << "[DEBUG]   - Original path: " << path << std::endl;
         std::cout << "[DEBUG]   - Final path: " << filename << std::endl;
         std::cout << "Texture failed to load at path: " << path << std::endl;
-        stbi_image_free(data);
+        std::cout << "[DEBUG]   - Using 1x1 white fallback texture." << std::endl;
+
+        unsigned char white[3] = { 255, 255, 255 };
+        GLenum format = GL_RGB;
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        glTexImage2D(GL_TEXTURE_2D, 0, format, 1, 1, 0, format, GL_UNSIGNED_BYTE, white);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glGenerateMipmap(GL_TEXTURE_2D);
     }
 
     return textureID;

@@ -59,8 +59,11 @@ void drawScene(Shader& lightingShader,
     unsigned int lightVAO,
     unsigned int diffuseMap,
     unsigned int specularMap,
-    Model* model,
-    Animator& animator,
+	Model* backgroundModel,
+	Model* enemyModel,
+	Animator* enemyAnimatorPtr,
+	Model* playerModel,
+	Animator* playerAnimatorPtr,
     unsigned int shadowMap,
     const glm::mat4& lightSpaceMatrix);
 
@@ -69,7 +72,7 @@ const unsigned int SCR_WIDTH  = 800;
 const unsigned int SCR_HEIGHT = 600;
 
 // camera
-Camera camera(glm::vec3(0.0f, 0.0f, 5.0f));
+Camera camera(glm::vec3(2.510f, -0.518f, -0.152f), glm::vec3(0.0f, 1.0f, 0.0f), -179.9f, -8.0f);
 float lastX = SCR_WIDTH / 2.0f;
 float lastY = SCR_HEIGHT / 2.0f;
 bool firstMouse = true;
@@ -85,9 +88,10 @@ bool g_UiMode = false;
 glm::vec3 gLightPos(1.2f, 1.0f, 2.0f);
 glm::vec3 gLightColor(1.0f, 1.0f, 1.0f);
 
-float gAmbientStrength  = 0.1f;
-float gDiffuseStrength  = 1.0f;
-float gSpecularStrength = 0.5f;
+// UI 기본값: Ambient 0.526, Diffuse 0.716, Specular 2.0
+float gAmbientStrength  = 0.526f;
+float gDiffuseStrength  = 0.716f;
+float gSpecularStrength = 2.0f;
 
 
 
@@ -111,6 +115,107 @@ const glm::vec3 gCubePositions[] = {
 	glm::vec3(-1.3f,  1.0f, -1.5f)
 };
 const unsigned int gCubeCount = sizeof(gCubePositions) / sizeof(glm::vec3);
+
+constexpr size_t MAX_BONES_SHADER = 100;
+std::vector<glm::mat4> gIdentityBones(MAX_BONES_SHADER, glm::mat4(1.0f));
+glm::vec3 gBackgroundRotateDeg(-90.0f, 0.0f, 0.0f);
+
+// 애니메이션 상태 로깅
+std::string gEnemyAnimState = "idle";
+std::string gPlayerAnimState = "idle";
+
+struct CharacterStatus
+{
+	const char* name;
+	int hp;
+};
+
+CharacterStatus gEnemyStatus{ "Enemy", 100 };
+CharacterStatus gPlayerStatus{ "Player", 100 };
+
+inline void StartEnemyDying();
+
+// 애니메이션 전역 포인터/상태 (ImGui 버튼 등에서 접근)
+Animation* gIdleAnimPtr = nullptr;
+Animation* gAltAnimPtr = nullptr;
+Animator*  gAnimatorPtr = nullptr;
+float gAltDurationSec = 1.0f;
+float gAltPlayTimer = 0.0f;
+bool  gAttackPlaying = false;
+Animation* gEnemyStunAnimPtr = nullptr;
+Animation* gEnemyPunchAnimPtr = nullptr;
+Animation* gEnemyDyingAnimPtr = nullptr;
+float gEnemyStunDurationSec = 1.0f;
+float gEnemyPunchDurationSec = 1.0f;
+float gEnemyDyingDurationSec = 1.0f;
+float gEnemyStunTimer = 0.0f;
+float gEnemyPunchTimer = 0.0f;
+float gEnemyDyingTimer = 0.0f;
+bool  gEnemyStunPlaying = false;
+bool  gEnemyPunchPlaying = false;
+bool  gEnemyDyingPlaying = false;
+bool  gEnemyDyingDone = false;
+// 필요 시 수동으로 스윙 길이를 덮어쓰기 (0이면 자동 계산값 사용)
+float gEnemyPunchDurationOverrideSec = 0.0f; // 필요시 수동 설정 (0이면 자동)
+
+// 플레이어 애니메이션 전역 포인터/상태
+Animation* gPlayerIdleAnimPtr = nullptr;
+Animation* gPlayerAttackAnimPtr = nullptr;
+Animation* gPlayerSlashAnimPtr = nullptr;
+Animation* gPlayerCastAnimPtr = nullptr;
+Animator*  gPlayerAnimatorPtr = nullptr;
+float gPlayerAttackDurationSec = 1.0f;
+float gPlayerSlashDurationSec = 1.0f;
+float gPlayerCastDurationSec = 1.0f;
+float gPlayerAttackTimer = 0.0f;
+float gPlayerSlashTimer = 0.0f;
+float gPlayerCastTimer = 0.0f;
+bool  gPlayerAttackPlaying = false;
+bool  gPlayerSlashPlaying = false;
+bool  gPlayerCastPlaying = false;
+bool  gPlayerAttackRequested = false;
+
+inline void LogAnimChange(const char* who, const char* state, std::string& prev)
+{
+	if (prev != state)
+	{
+		prev = state;
+		std::cout << "[Anim] " << who << " -> " << state << std::endl;
+	}
+}
+
+inline void ApplyDamage(CharacterStatus& target, int amount, const char* source)
+{
+	target.hp = std::max(0, target.hp - amount);
+	std::cout << "[HP] " << target.name << " -" << amount << " (from " << source << ") -> " << target.hp << std::endl;
+
+	// 적 HP 0 시 사망 애니메이션 트리거
+	if (&target == &gEnemyStatus && target.hp == 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+	{
+		StartEnemyDying();
+	}
+}
+
+inline void LogAnimStart(const char* who, const char* state, double durationSec)
+{
+	// 남은 시간(초) 기준으로 출력
+	std::cout << "[Anim] " << who << " " << state << " start, remaining=" << durationSec << " sec" << std::endl;
+}
+
+inline void StartEnemyDying()
+{
+	if (!gAnimatorPtr || !gEnemyDyingAnimPtr) return;
+	gAnimatorPtr->PlayAnimation(gEnemyDyingAnimPtr);
+	LogAnimChange("Enemy", "dying", gEnemyAnimState);
+	LogAnimStart("Enemy", "dying", gEnemyDyingDurationSec);
+	gEnemyDyingPlaying = true;
+	gEnemyDyingDone = false;
+	gEnemyDyingTimer = 0.0f;
+	// 다른 적 액션 중단
+	gAttackPlaying = false;
+	gEnemyStunPlaying = false;
+	gEnemyPunchPlaying = false;
+}
 
 // ==========================================
 // main
@@ -186,13 +291,71 @@ int main() {
     // 추가 애니메이션: 동일 리깅의 다른 FBX를 로드해 10초 후 전환합니다.
     // 파일명을 원하는 애니메이션 FBX로 교체하세요.
     Animation altAnim("assets/models/Eemy/AltAnim.fbx", &nanosuit);
-    float altDurationSec = altAnim.GetDuration() / std::max(altAnim.GetTicksPerSecond(), 1.0f);
-    if (altDurationSec <= 0.0f) altDurationSec = 1.0f; // 안전장치
+	Animation enemyStun("assets/models/Eemy/Stun.fbx", &nanosuit);
+	Animation enemyPunch("assets/models/Eemy/Mutant Punch.fbx", &nanosuit);
+	Animation enemyDying("assets/models/Eemy/Mutant Dying.fbx", &nanosuit);
+    gIdleAnimPtr = &idleAnim;
+    gAltAnimPtr = &altAnim;
+	gEnemyStunAnimPtr = &enemyStun;
+	gEnemyPunchAnimPtr = &enemyPunch;
+	gEnemyDyingAnimPtr = &enemyDying;
 
     Animator animator(&idleAnim);
+    gAnimatorPtr = &animator;
+    gAltDurationSec = altAnim.GetDuration() / std::max(altAnim.GetTicksPerSecond(), 1.0f);
+    if (gAltDurationSec <= 0.0f) gAltDurationSec = 1.0f; // 안전장치
+	gEnemyStunDurationSec = enemyStun.GetDuration() / std::max(enemyStun.GetTicksPerSecond(), 1.0f);
+	gEnemyPunchDurationSec = enemyPunch.GetDuration() / std::max(enemyPunch.GetTicksPerSecond(), 1.0f);
+	gEnemyDyingDurationSec = enemyDying.GetDuration() / std::max(enemyDying.GetTicksPerSecond(), 1.0f);
+	// 스턴/스윙 길이가 0으로 들어오는 경우 최소 1초로 보정
+	if (gEnemyStunDurationSec < 0.1f) gEnemyStunDurationSec = 1.0f;
+	if (gEnemyPunchDurationOverrideSec > 0.0f)
+		gEnemyPunchDurationSec = gEnemyPunchDurationOverrideSec;
+	else if (gEnemyPunchDurationSec < 0.1f)
+		gEnemyPunchDurationSec = 1.0f;
+	if (gEnemyDyingDurationSec < 0.1f) gEnemyDyingDurationSec = 1.0f;
 
-    bool attackPlaying = false;
-    float altPlayTimer = 0.0f; // 대체 애니메이션 유지 시간
+    gAttackPlaying = false;
+    gAltPlayTimer = 0.0f; // 대체 애니메이션 유지 시간
+	gEnemyStunPlaying = false;
+	gEnemyPunchPlaying = false;
+	gEnemyDyingPlaying = false;
+	gEnemyDyingDone = false;
+	gEnemyStunTimer = gEnemyPunchTimer = 0.0f;
+	gEnemyDyingTimer = 0.0f;
+
+	// 플레이어 모델 및 애니메이션
+	Model playerModel("assets/models/Player/IdlePlayer.fbx");
+	Animation playerIdle("assets/models/Player/IdlePlayer.fbx", &playerModel);
+	Animation playerAttack("assets/models/Player/AttackPlayer.fbx", &playerModel);
+	Animation playerSlash("assets/models/Player/SlashPlayer.fbx", &playerModel);
+	Animation playerCast("assets/models/Player/CastingPlayer.fbx", &playerModel);
+	Animator playerAnimator(&playerIdle);
+	gPlayerIdleAnimPtr = &playerIdle;
+	gPlayerAttackAnimPtr = &playerAttack;
+	gPlayerSlashAnimPtr = &playerSlash;
+	gPlayerCastAnimPtr = &playerCast;
+	gPlayerAnimatorPtr = &playerAnimator;
+	gPlayerAttackDurationSec = playerAttack.GetDuration() / std::max(playerAttack.GetTicksPerSecond(), 1.0f);
+	gPlayerSlashDurationSec = playerSlash.GetDuration() / std::max(playerSlash.GetTicksPerSecond(), 1.0f);
+	gPlayerCastDurationSec = playerCast.GetDuration() / std::max(playerCast.GetTicksPerSecond(), 1.0f);
+	if (gPlayerAttackDurationSec <= 0.0f) gPlayerAttackDurationSec = 1.0f;
+	if (gPlayerSlashDurationSec <= 0.0f) gPlayerSlashDurationSec = 1.0f;
+	if (gPlayerCastDurationSec <= 0.0f) gPlayerCastDurationSec = 1.0f;
+	gPlayerAttackPlaying = false;
+	gPlayerSlashPlaying = false;
+	gPlayerCastPlaying = false;
+	gPlayerAttackRequested = false;
+	gPlayerAttackTimer = 0.0f;
+	gPlayerSlashTimer = 0.0f;
+	gPlayerCastTimer = 0.0f;
+
+	// 초기 상태 로그 (idle 한 번만)
+	LogAnimChange("Enemy", "idle", gEnemyAnimState);
+	LogAnimChange("Player", "idle", gPlayerAnimState);
+
+	// 배경 모델 (실제 파일명: sNOWlaNDSCAPE.fbx)
+	Model backgroundModel("assets/BackGround/sNOWlaNDSCAPE.fbx");
 
 	// 9. Shadow map FBO 및 텍스처 설정
 	setupShadowMap(gDepthMapFBO, gDepthMap);
@@ -211,13 +374,15 @@ while (!glfwWindowShouldClose(window)) {
     ImGui::NewFrame();
     buildImGuiUI();
 
-    // 카메라 내부 벡터 재계산 트릭
-    camera.ProcessMouseMovement(0.0f, 0.0f, true);
+    // 입력 기반 카메라 업데이트는 비활성화 (고정값 사용)
 
-    // 애니메이션 업데이트
-    animator.UpdateAnimation(deltaTime);
+	// 애니메이션 업데이트
+	// 적: 사망 완료 시 더 이상 업데이트하지 않고 마지막 포즈 유지
+	if (!gEnemyDyingDone)
+		animator.UpdateAnimation(deltaTime);
+	if (gPlayerAnimatorPtr) gPlayerAnimatorPtr->UpdateAnimation(deltaTime);
 
-	// 스페이스 키로 공격(altAnim) 트리거, 재생이 끝나면 idle로 복귀
+	// 스페이스 키로 적 공격(altAnim) 트리거, 재생이 끝나면 idle로 복귀
 	static int prevSpaceState = GLFW_RELEASE;
 	int spaceState = glfwGetKey(window, GLFW_KEY_SPACE);
 	bool spacePressed = (spaceState == GLFW_PRESS && prevSpaceState == GLFW_RELEASE);
@@ -226,20 +391,138 @@ while (!glfwWindowShouldClose(window)) {
 	// ImGui가 키보드를 잡고 있거나 UI 모드면 무시
 	bool blockInput = g_UiMode || ImGui::GetIO().WantCaptureKeyboard;
 
-	if (!blockInput && spacePressed && !attackPlaying)
+	if (!blockInput && spacePressed && !gAttackPlaying && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
 	{
 		animator.PlayAnimation(&altAnim);
-		attackPlaying = true;
-		altPlayTimer = 0.0f;
+		LogAnimChange("Enemy", "attack", gEnemyAnimState);
+		LogAnimStart("Enemy", "attack", gAltDurationSec);
+		ApplyDamage(gPlayerStatus, 10, "Enemy attack");
+		gAttackPlaying = true;
+		gAltPlayTimer = 0.0f;
 	}
 
-	if (attackPlaying)
+	if (gAttackPlaying)
 	{
-		altPlayTimer += deltaTime;
-		if (altPlayTimer >= altDurationSec)
+		gAltPlayTimer += deltaTime;
+		if (gAltPlayTimer >= gAltDurationSec)
 		{
 			animator.PlayAnimation(&idleAnim);
-			attackPlaying = false;
+			gAttackPlaying = false;
+		}
+	}
+
+	// 플레이어 공격/슬래시/캐스트 트리거(버튼에서 요청)
+	if (gPlayerAttackRequested && !gPlayerAttackPlaying && gPlayerAnimatorPtr && gPlayerAttackAnimPtr)
+	{
+		gPlayerAnimatorPtr->PlayAnimation(gPlayerAttackAnimPtr);
+		LogAnimStart("Player", "attack", gPlayerAttackDurationSec);
+		ApplyDamage(gEnemyStatus, 10, "Player attack");
+		gPlayerAttackPlaying = true;
+		gPlayerSlashPlaying = false;
+		gPlayerCastPlaying = false;
+		gPlayerAttackTimer = 0.0f;
+		gPlayerAttackRequested = false;
+	}
+	if (gPlayerAttackPlaying && gPlayerAnimatorPtr)
+	{
+		gPlayerAttackTimer += deltaTime;
+		if (gPlayerAttackTimer >= gPlayerAttackDurationSec)
+		{
+			gPlayerAnimatorPtr->PlayAnimation(gPlayerIdleAnimPtr);
+			gPlayerAttackPlaying = false;
+			// 플레이어 공격 종료 시 적 스턴 시작 (단, 적이 살아있을 때만)
+			if (gAnimatorPtr && gEnemyStunAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+			{
+				gAnimatorPtr->PlayAnimation(gEnemyStunAnimPtr);
+				LogAnimChange("Enemy", "stun", gEnemyAnimState);
+				gEnemyStunPlaying = true;
+				gEnemyPunchPlaying = false;
+				gEnemyStunTimer = 0.0f;
+				gEnemyPunchTimer = 0.0f;
+			}
+		}
+	}
+	if (gPlayerSlashPlaying && gPlayerAnimatorPtr)
+	{
+		gPlayerSlashTimer += deltaTime;
+		if (gPlayerSlashTimer >= gPlayerSlashDurationSec)
+		{
+			gPlayerAnimatorPtr->PlayAnimation(gPlayerIdleAnimPtr);
+			gPlayerSlashPlaying = false;
+			// 슬래시 종료 시 적 반격 시퀀스(스턴 -> 펀치) 시작
+			if (gAnimatorPtr && gEnemyStunAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+			{
+				gAnimatorPtr->PlayAnimation(gEnemyStunAnimPtr);
+				LogAnimChange("Enemy", "stun", gEnemyAnimState);
+				gEnemyStunPlaying = true;
+				gEnemyPunchPlaying = false;
+				gEnemyStunTimer = 0.0f;
+				gEnemyPunchTimer = 0.0f;
+			}
+		}
+	}
+	if (gPlayerCastPlaying && gPlayerAnimatorPtr)
+	{
+		gPlayerCastTimer += deltaTime;
+		if (gPlayerCastTimer >= gPlayerCastDurationSec)
+		{
+			gPlayerAnimatorPtr->PlayAnimation(gPlayerIdleAnimPtr);
+			gPlayerCastPlaying = false;
+			// 캐스팅 종료 시 적 반격 시퀀스(스턴 -> 펀치) 시작
+			if (gAnimatorPtr && gEnemyStunAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+			{
+				gAnimatorPtr->PlayAnimation(gEnemyStunAnimPtr);
+				LogAnimChange("Enemy", "stun", gEnemyAnimState);
+				gEnemyStunPlaying = true;
+				gEnemyPunchPlaying = false;
+				gEnemyStunTimer = 0.0f;
+				gEnemyPunchTimer = 0.0f;
+			}
+		}
+	}
+
+	// 적 스턴/펀치 시퀀스 처리 (사망 상태면 수행하지 않음)
+	if (gEnemyStunPlaying && gAnimatorPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+	{
+		float dt = std::min(deltaTime, 0.1f); // 프레임이 길어도 타이머가 과도하게 증가하지 않도록 캡
+		gEnemyStunTimer += dt;
+		if (gEnemyStunTimer >= gEnemyStunDurationSec)
+		{
+			// 스턴 종료 -> 펀치 시작
+			if (gEnemyPunchAnimPtr)
+			{
+				gAnimatorPtr->PlayAnimation(gEnemyPunchAnimPtr);
+				LogAnimChange("Enemy", "punch", gEnemyAnimState);
+				LogAnimStart("Enemy", "punch", gEnemyPunchDurationSec);
+				ApplyDamage(gPlayerStatus, 10, "Enemy punch");
+				gEnemyPunchPlaying = true;
+				gEnemyPunchTimer = 0.0f;
+			}
+			gEnemyStunPlaying = false;
+		}
+	}
+	if (gEnemyPunchPlaying && gAnimatorPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+	{
+		float dt = std::min(deltaTime, 0.1f);
+		gEnemyPunchTimer += dt;
+		if (gEnemyPunchTimer >= gEnemyPunchDurationSec && gIdleAnimPtr)
+		{
+			// 펀치 종료 -> idle 복귀
+			gAnimatorPtr->PlayAnimation(gIdleAnimPtr);
+			LogAnimChange("Enemy", "idle", gEnemyAnimState);
+			gEnemyPunchPlaying = false;
+		}
+	}
+
+	// 적 사망 애니메이션 진행/정지 처리
+	if (gEnemyDyingPlaying && gAnimatorPtr)
+	{
+		float dt = std::min(deltaTime, 0.1f);
+		gEnemyDyingTimer += dt;
+		if (gEnemyDyingTimer >= gEnemyDyingDurationSec)
+		{
+			gEnemyDyingPlaying = false;
+			gEnemyDyingDone = true; // 이후 업데이트 정지 → 마지막 포즈 유지
 		}
 	}
 
@@ -254,12 +537,48 @@ while (!glfwWindowShouldClose(window)) {
     depthShader.use();
     depthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
 
-    // 큐브 깊이 렌더
-    renderCubes(depthShader, cubeVAO);
+    const size_t MAX_BONES_SHADER = 100;
 
-    // 애니메이션 모델 깊이 렌더
     depthAnimShader.use();
     depthAnimShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+
+    // 배경 모델 깊이 렌더 (본 없음 → identity), 스케일 1로 조정
+    {
+        glm::mat4 modelMat = glm::mat4(1.0f);
+        modelMat = glm::translate(modelMat, glm::vec3(0.0f, -2.0f, 0.0f));
+        modelMat = glm::scale(modelMat, glm::vec3(1.0f));
+        depthAnimShader.setMat4("model", modelMat);
+
+        size_t boneCount = std::min(gIdentityBones.size(), MAX_BONES_SHADER);
+        for (size_t i = 0; i < boneCount; ++i)
+        {
+            depthAnimShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", gIdentityBones[i]);
+        }
+        backgroundModel.Draw(depthAnimShader);
+    }
+
+    depthAnimShader.use();
+    depthAnimShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+
+    // 배경 모델 깊이 렌더 (본 없음 → identity), 스케일 30
+    {
+        glm::mat4 modelMat = glm::mat4(1.0f);
+        modelMat = glm::translate(modelMat, glm::vec3(0.0f, -2.0f, 0.0f));
+        modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.x), glm::vec3(1, 0, 0));
+        modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.y), glm::vec3(0, 1, 0));
+        modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.z), glm::vec3(0, 0, 1));
+        modelMat = glm::scale(modelMat, glm::vec3(30.0f));
+        depthAnimShader.setMat4("model", modelMat);
+
+        size_t boneCount = std::min(gIdentityBones.size(), MAX_BONES_SHADER);
+        for (size_t i = 0; i < boneCount; ++i)
+        {
+            depthAnimShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", gIdentityBones[i]);
+        }
+        backgroundModel.Draw(depthAnimShader);
+    }
+
+    // 적 모델 깊이 렌더
     {
         glm::mat4 modelMat = glm::mat4(1.0f);
         modelMat = glm::translate(modelMat, glm::vec3(0.0f, -1.75f, 0.0f));
@@ -267,11 +586,29 @@ while (!glfwWindowShouldClose(window)) {
         depthAnimShader.setMat4("model", modelMat);
 
         auto transforms = animator.GetFinalBoneMatrices();
-        for (size_t i = 0; i < transforms.size(); ++i)
+        size_t boneCount = std::min(transforms.size(), MAX_BONES_SHADER);
+        for (size_t i = 0; i < boneCount; ++i)
         {
             depthAnimShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", transforms[i]);
         }
         nanosuit.Draw(depthAnimShader);
+    }
+
+    // 플레이어 모델 깊이 렌더
+    if (gPlayerAnimatorPtr)
+    {
+        glm::mat4 modelMat = glm::mat4(1.0f);
+        modelMat = glm::translate(modelMat, glm::vec3(2.0f, -1.75f, 0.0f)); // 플레이어 위치 오프셋
+        modelMat = glm::scale(modelMat, glm::vec3(0.002f));
+        depthAnimShader.setMat4("model", modelMat);
+
+        auto transforms = gPlayerAnimatorPtr->GetFinalBoneMatrices();
+        size_t boneCount = std::min(transforms.size(), MAX_BONES_SHADER);
+        for (size_t i = 0; i < boneCount; ++i)
+        {
+            depthAnimShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", transforms[i]);
+        }
+        playerModel.Draw(depthAnimShader);
     }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -284,7 +621,9 @@ while (!glfwWindowShouldClose(window)) {
     drawScene(lightingShader, skinnedShader, lightCubeShader,
         cubeVAO, lightVAO,
         diffuseMap, specularMap,
-        &nanosuit, animator,
+        &backgroundModel,
+        &nanosuit, &animator,
+        &playerModel, gPlayerAnimatorPtr,
         gDepthMap,           // shadow map 텍스처
         lightSpaceMatrix);   // 빛 시점 행렬
 
@@ -644,43 +983,123 @@ void buildImGuiUI()
 	if (!g_UiMode)
 		return;
 
-	ImGui::Begin("Camera Control");
+	ImGui::Begin("Animation");
 
-	// 카메라 위치
-	ImGui::DragFloat3("Position", glm::value_ptr(camera.Position), 0.01f);
-	// Yaw / Pitch
-	ImGui::DragFloat("Yaw", &camera.Yaw, 0.5f);
-	ImGui::DragFloat("Pitch", &camera.Pitch, 0.5f, -89.0f, 89.0f);
+	// HP 바 표시
+	const float maxHp = 100.0f;
+	float enemyHpRatio = std::max(0.0f, std::min(1.0f, gEnemyStatus.hp / maxHp));
+	float playerHpRatio = std::max(0.0f, std::min(1.0f, gPlayerStatus.hp / maxHp));
 
-	// FOV
-	ImGui::DragFloat("Zoom (FOV)", &camera.Zoom, 0.1f, 1.0f, 90.0f);
-
-	// 카메라 리셋
-	if (ImGui::Button("Reset Camera")) {
-		camera = Camera(glm::vec3(0.0f, 0.0f, 3.0f));
-	}
-
+	ImGui::Text("HP");
+	ImGui::PushStyleColor(ImGuiCol_PlotHistogram, IM_COL32(200, 40, 40, 255)); // enemy: red
+	ImGui::ProgressBar(enemyHpRatio, ImVec2(-1, 0), ("Enemy HP: " + std::to_string(gEnemyStatus.hp)).c_str());
+	ImGui::PopStyleColor();
+	ImGui::ProgressBar(playerHpRatio, ImVec2(-1, 0), ("Player HP: " + std::to_string(gPlayerStatus.hp)).c_str());
 	ImGui::Separator();
-	ImGui::Text("Lighting");
 
-	// 광원 위치
-	ImGui::DragFloat3("Light Pos", glm::value_ptr(gLightPos), 0.01f);
-
-	// 광원 색상
-	ImGui::ColorEdit3("Light Color", glm::value_ptr(gLightColor));
-
-	// 각 계수
-	ImGui::SliderFloat("Ambient",  &gAmbientStrength,  0.0f, 1.0f);
-	ImGui::SliderFloat("Diffuse",  &gDiffuseStrength,  0.0f, 2.0f);
-	ImGui::SliderFloat("Specular", &gSpecularStrength, 0.0f, 2.0f);
-
-	if (ImGui::Button("Reset Light")) {
-		gLightPos         = glm::vec3(1.2f, 1.0f, 2.0f);
-		gLightColor       = glm::vec3(1.0f, 1.0f, 1.0f);
-		gAmbientStrength  = 0.1f;
-		gDiffuseStrength  = 1.0f;
-		gSpecularStrength = 0.5f;
+	ImGui::Text("Player Animation");
+	bool playerButtonDisabled = (gPlayerAnimatorPtr == nullptr);
+	if (playerButtonDisabled) ImGui::BeginDisabled();
+	if (ImGui::Button("Play Player Attack"))
+	{
+		if (!gPlayerAttackPlaying && gPlayerAnimatorPtr && gPlayerAttackAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+		{
+			gPlayerAnimatorPtr->PlayAnimation(gPlayerAttackAnimPtr);
+			LogAnimChange("Player", "attack", gPlayerAnimState);
+			LogAnimStart("Player", "attack", gPlayerAttackDurationSec);
+			ApplyDamage(gEnemyStatus, 10, "Player attack");
+			gPlayerAttackPlaying = true;
+			gPlayerSlashPlaying = false;
+			gPlayerCastPlaying = false;
+			gPlayerAttackTimer = 0.0f;
+		}
 	}
+	if (ImGui::Button("Play Player Slash"))
+	{
+		if (gPlayerAnimatorPtr && gPlayerSlashAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+		{
+			gPlayerAnimatorPtr->PlayAnimation(gPlayerSlashAnimPtr);
+			LogAnimChange("Player", "slash", gPlayerAnimState);
+			LogAnimStart("Player", "slash", gPlayerSlashDurationSec);
+			ApplyDamage(gEnemyStatus, 10, "Player slash");
+			gPlayerSlashPlaying = true;
+			gPlayerAttackPlaying = false;
+			gPlayerCastPlaying = false;
+			gPlayerSlashTimer = 0.0f;
+		}
+	}
+	if (ImGui::Button("Play Player Casting"))
+	{
+		if (gPlayerAnimatorPtr && gPlayerCastAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+		{
+			gPlayerAnimatorPtr->PlayAnimation(gPlayerCastAnimPtr);
+			LogAnimChange("Player", "cast", gPlayerAnimState);
+			LogAnimStart("Player", "cast", gPlayerCastDurationSec);
+			ApplyDamage(gEnemyStatus, 10, "Player cast");
+			gPlayerCastPlaying = true;
+			gPlayerAttackPlaying = false;
+			gPlayerSlashPlaying = false;
+			gPlayerCastTimer = 0.0f;
+		}
+	}
+	if (playerButtonDisabled) ImGui::EndDisabled();
+
+	ImGui::End();
+
+	// 별도 애니메이션 창 (보조)
+	ImGui::Begin("Animation (Alt)");
+	// HP 바 표시 (보조 창)
+	ImGui::Text("HP");
+	ImGui::PushStyleColor(ImGuiCol_PlotHistogram, IM_COL32(200, 40, 40, 255)); // enemy: red
+	ImGui::ProgressBar(enemyHpRatio, ImVec2(-1, 0), ("Enemy HP: " + std::to_string(gEnemyStatus.hp)).c_str());
+	ImGui::PopStyleColor();
+	ImGui::ProgressBar(playerHpRatio, ImVec2(-1, 0), ("Player HP: " + std::to_string(gPlayerStatus.hp)).c_str());
+
+	bool playerButtonDisabled2 = (gPlayerAnimatorPtr == nullptr);
+	if (playerButtonDisabled2) ImGui::BeginDisabled();
+	if (ImGui::Button("Play Player Attack##anim_window"))
+	{
+		if (!gPlayerAttackPlaying && gPlayerAnimatorPtr && gPlayerAttackAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+		{
+			gPlayerAnimatorPtr->PlayAnimation(gPlayerAttackAnimPtr);
+			LogAnimChange("Player", "attack", gPlayerAnimState);
+			LogAnimStart("Player", "attack", gPlayerAttackDurationSec);
+			ApplyDamage(gEnemyStatus, 50, "Player attack");
+			gPlayerAttackPlaying = true;
+			gPlayerSlashPlaying = false;
+			gPlayerCastPlaying = false;
+			gPlayerAttackTimer = 0.0f;
+		}
+	}
+	if (ImGui::Button("Play Player Slash##anim_window"))
+	{
+		if (gPlayerAnimatorPtr && gPlayerSlashAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+		{
+			gPlayerAnimatorPtr->PlayAnimation(gPlayerSlashAnimPtr);
+			LogAnimChange("Player", "slash", gPlayerAnimState);
+			LogAnimStart("Player", "slash", gPlayerSlashDurationSec);
+			ApplyDamage(gEnemyStatus, 20, "Player slash");
+			gPlayerSlashPlaying = true;
+			gPlayerAttackPlaying = false;
+			gPlayerCastPlaying = false;
+			gPlayerSlashTimer = 0.0f;
+		}
+	}
+	if (ImGui::Button("Play Player Casting##anim_window"))
+	{
+		if (gPlayerAnimatorPtr && gPlayerCastAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+		{
+			gPlayerAnimatorPtr->PlayAnimation(gPlayerCastAnimPtr);
+			LogAnimChange("Player", "cast", gPlayerAnimState);
+			LogAnimStart("Player", "cast", gPlayerCastDurationSec);
+			ApplyDamage(gEnemyStatus, 30, "Player cast");
+			gPlayerCastPlaying = true;
+			gPlayerAttackPlaying = false;
+			gPlayerSlashPlaying = false;
+			gPlayerCastTimer = 0.0f;
+		}
+	}
+	if (playerButtonDisabled2) ImGui::EndDisabled();
 
 	ImGui::End();
 }
@@ -696,11 +1115,16 @@ void drawScene(Shader& lightingShader,
 	unsigned int lightVAO,
 	unsigned int diffuseMap,
 	unsigned int specularMap,
-	Model* model,
-	Animator& animator,
+	Model* backgroundModel,
+	Model* enemyModel,
+	Animator* enemyAnimatorPtr,
+	Model* playerModel,
+	Animator* playerAnimatorPtr,
 	unsigned int shadowMap,
 	const glm::mat4& lightSpaceMatrix)
 {
+	const size_t MAX_BONES_SHADER = 100;
+
 	// 텍스처 바인딩
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, diffuseMap);
@@ -743,11 +1167,40 @@ void drawScene(Shader& lightingShader,
 	lightingShader.setInt("material.specular", 1);
 	lightingShader.setInt("shadowMap", 2);
 
-	// 큐브 실제 기하 렌더링
-	renderCubes(lightingShader, cubeVAO);
+	// 배경 렌더링 (본 없음 → identity), 스케일 30
+	if (backgroundModel)
+	{
+		skinnedShader.use();
+		skinnedShader.setMat4("projection", projection);
+		skinnedShader.setMat4("view", view);
+		skinnedShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+		skinnedShader.setVec3("light.position", gLightPos);
+		skinnedShader.setVec3("viewPos", camera.Position);
+		skinnedShader.setVec3("light.ambient", ambientColor);
+		skinnedShader.setVec3("light.diffuse", diffuseColor);
+		skinnedShader.setVec3("light.specular", specularColor);
+		skinnedShader.setFloat("material.shininess", 32.0f);
+		skinnedShader.setInt("material.diffuse", 0);
+		skinnedShader.setInt("material.specular", 1);
+		skinnedShader.setInt("shadowMap", 2);
 
-	// 스키닝 모델 렌더링
-	if (model)
+		glm::mat4 modelMat = glm::mat4(1.0f);
+		modelMat = glm::translate(modelMat, glm::vec3(0.0f, -2.0f, 0.0f));
+		modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.x), glm::vec3(1, 0, 0));
+		modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.y), glm::vec3(0, 1, 0));
+		modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.z), glm::vec3(0, 0, 1));
+		modelMat = glm::scale(modelMat, glm::vec3(10.0f));
+		skinnedShader.setMat4("model", modelMat);
+
+		size_t boneCount = std::min(gIdentityBones.size(), MAX_BONES_SHADER);
+		for (size_t i = 0; i < boneCount; ++i)
+			skinnedShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", gIdentityBones[i]);
+
+		backgroundModel->Draw(skinnedShader);
+	}
+
+	// 스키닝 모델 렌더링 (적)
+	if (enemyModel && enemyAnimatorPtr)
 	{
 		skinnedShader.use();
 		skinnedShader.setMat4("projection", projection);
@@ -764,15 +1217,48 @@ void drawScene(Shader& lightingShader,
 		skinnedShader.setInt("shadowMap", 2);
 
 		glm::mat4 modelMat = glm::mat4(1.0f);
-		modelMat = glm::translate(modelMat, glm::vec3(0.0f, -1.75f, 0.0f));
+		modelMat = glm::translate(modelMat, glm::vec3(0.0f, -1.0f, 0.0f));
+		modelMat = glm::rotate(modelMat, glm::radians(90.0f), glm::vec3(0, 1, 0));
 		modelMat = glm::scale(modelMat, glm::vec3(0.002f));
 		skinnedShader.setMat4("model", modelMat);
 
-		auto transforms = animator.GetFinalBoneMatrices();
-		for (size_t i = 0; i < transforms.size(); ++i)
+		auto transforms = enemyAnimatorPtr->GetFinalBoneMatrices();
+		size_t boneCount = std::min(transforms.size(), MAX_BONES_SHADER);
+		for (size_t i = 0; i < boneCount; ++i)
 			skinnedShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", transforms[i]);
 
-		model->Draw(skinnedShader);
+		enemyModel->Draw(skinnedShader);
+	}
+
+	// 스키닝 모델 렌더링 (플레이어)
+	if (playerModel && playerAnimatorPtr)
+	{
+		skinnedShader.use();
+		skinnedShader.setMat4("projection", projection);
+		skinnedShader.setMat4("view", view);
+		skinnedShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+		skinnedShader.setVec3("light.position", gLightPos);
+		skinnedShader.setVec3("viewPos", camera.Position);
+		skinnedShader.setVec3("light.ambient", ambientColor);
+		skinnedShader.setVec3("light.diffuse", diffuseColor);
+		skinnedShader.setVec3("light.specular", specularColor);
+		skinnedShader.setFloat("material.shininess", 32.0f);
+		skinnedShader.setInt("material.diffuse", 0);
+		skinnedShader.setInt("material.specular", 1);
+		skinnedShader.setInt("shadowMap", 2);
+
+		glm::mat4 modelMat = glm::mat4(1.0f);
+		modelMat = glm::translate(modelMat, glm::vec3(2.0f, -1.0f, 0.0f));
+		modelMat = glm::rotate(modelMat, glm::radians(-90.0f), glm::vec3(0, 1, 0));
+		modelMat = glm::scale(modelMat, glm::vec3(0.002f));
+		skinnedShader.setMat4("model", modelMat);
+
+		auto transforms = playerAnimatorPtr->GetFinalBoneMatrices();
+		size_t boneCount = std::min(transforms.size(), MAX_BONES_SHADER);
+		for (size_t i = 0; i < boneCount; ++i)
+			skinnedShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", transforms[i]);
+
+		playerModel->Draw(skinnedShader);
 	}
 
 	// 광원 큐브 렌더링
@@ -797,23 +1283,9 @@ void drawScene(Shader& lightingShader,
 void processInput(GLFWwindow* window)
 {
 	// UI 모드이면 카메라 이동(WASD) 및 종료(ESC) 키 입력을 막음
-	if (g_UiMode)
-		return;
-	// ImGui가 키보드를 사용 중이면 막음
-	if (ImGui::GetIO().WantCaptureKeyboard)
-		return;
-
-	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-		glfwSetWindowShouldClose(window, true);
-
-	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-		camera.ProcessKeyboard(FORWARD, deltaTime);
-	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-		camera.ProcessKeyboard(BACKWARD, deltaTime);
-	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-		camera.ProcessKeyboard(LEFT, deltaTime);
-	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-		camera.ProcessKeyboard(RIGHT, deltaTime);
+    // 카메라 입력 제어 비활성화 (고정 위치/회전 사용)
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        glfwSetWindowShouldClose(window, true);
 }
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
@@ -824,42 +1296,13 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 // 마우스 이동 콜백
 void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
 {
-	// UI 모드이면 회전 멈춤
-	if (g_UiMode)
-	{
-		firstMouse = true; // UI 모드에서 나올 때 튐 방지
-		return;
-	}
-
-	float xpos = static_cast<float>(xposIn);
-	float ypos = static_cast<float>(yposIn);
-
-	if (firstMouse)
-	{
-		lastX = xpos;
-		lastY = ypos;
-		firstMouse = false;
-	}
-
-	float xoffset = xpos - lastX;
-	float yoffset = lastY - ypos; // y는 아래에서 위로 증가하므로 반대
-
-	lastX = xpos;
-	lastY = ypos;
-
-	camera.ProcessMouseMovement(xoffset, yoffset);
+    // 마우스 기반 카메라 회전 비활성화
 }
 
 // 스크롤 콜백
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 {
-	ImGui_ImplGlfw_ScrollCallback(window, xoffset, yoffset); // ImGui에 전달
-
-	// ImGui가 마우스를 캡처 중이면 카메라 줌 막음
-	if (ImGui::GetIO().WantCaptureMouse)
-		return;
-
-	camera.ProcessMouseScroll(static_cast<float>(yoffset));
+    // 스크롤 기반 카메라 줌 비활성화
 }
 
 // 키보드 콜백 (UI 모드 토글 포함)
