@@ -1,4 +1,5 @@
-﻿#include <glad/glad.h>
+﻿#pragma region Includes
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
 #ifndef GLM_ENABLE_EXPERIMENTAL
@@ -16,20 +17,18 @@
 #include <gtc/matrix_transform.hpp>
 #include <gtc/type_ptr.hpp>
 
-#include "shader_m.h"	// 셰이더 유틸리티 클래스
-#include "camera.h"    // 카메라 클래스
-#include "animation.h"
-#include "animator.h"
+#include "shader_m.h"
+#include "camera.h"
 
-// ImGui 헤더
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+#include "Player.h"
+#include "Background.h"
+#pragma endregion
 
-#include "model.h"
-
-// 콜백 함수 선언
+#pragma region Forward Declarations
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
@@ -37,656 +36,297 @@ void processInput(GLFWwindow* window);
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods);
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 
-// ====== 새로 추가할 헬퍼 함수들 선언 ======
 GLFWwindow* initGLFWAndCreateWindow(int width, int height, const char* title);
 bool initGLAD();
 void setupCallbacks(GLFWwindow* window);
 void initImGui(GLFWwindow* window);
 void shutdownImGui();
 void setupShadowMap(unsigned int& depthMapFBO, unsigned int& depthMap);
-void setupCubeData(unsigned int& VBO, unsigned int& cubeVAO, unsigned int& lightVAO);
-unsigned int loadTexture2D(const char* path);
 unsigned int loadCubemap(const std::vector<std::string>& faces);
 void setupSkyboxData(unsigned int& skyboxVAO, unsigned int& skyboxVBO);
+unsigned int initSkybox(Shader& skyboxShader, unsigned int& skyboxVAO, unsigned int& skyboxVBO);
 glm::mat4 computeLightSpaceMatrix();
-void renderCubes(Shader& shader, unsigned int cubeVAO);
-
 void buildImGuiUI();
-void drawScene(Shader& lightingShader,
-    Shader& skinnedShader,
-    Shader& lightCubeShader,
-    unsigned int cubeVAO,
-    unsigned int lightVAO,
-    unsigned int diffuseMap,
-    unsigned int specularMap,
-	Model* backgroundModel,
-	Model* enemyModel,
-	Animator* enemyAnimatorPtr,
-	Model* playerModel,
-	Animator* playerAnimatorPtr,
-    unsigned int shadowMap,
-    const glm::mat4& lightSpaceMatrix);
+void drawScene(Shader& skinnedShader, unsigned int shadowMap, const glm::mat4& lightSpaceMatrix);
+#pragma endregion
 
-// settings
+#pragma region Global Variables
+
+// 화면 해상도
 const unsigned int SCR_WIDTH  = 800;
 const unsigned int SCR_HEIGHT = 600;
 
-// camera
+// 카메라 설정
+// 위치: (2.510, -0.518, -0.152), 위쪽 방향: (0, 1, 0), Yaw: -179.9도, Pitch: -8도
 Camera camera(glm::vec3(2.510f, -0.518f, -0.152f), glm::vec3(0.0f, 1.0f, 0.0f), -179.9f, -8.0f);
-float lastX = SCR_WIDTH / 2.0f;
-float lastY = SCR_HEIGHT / 2.0f;
-bool firstMouse = true;
 
-// timing
-float deltaTime = 0.0f;	// time between current frame and last frame
-float lastFrame = 0.0f;
+// 마우스 입력 처리용 변수
+float lastX = SCR_WIDTH / 2.0f;  // 이전 마우스 X 좌표
+float lastY = SCR_HEIGHT / 2.0f; // 이전 마우스 Y 좌표
+bool firstMouse = true;          // 첫 마우스 입력인지 여부
+
+// 시간 관리
+float deltaTime = 0.0f;   // 이전 프레임과의 시간 차이 (초 단위)
+float lastFrame = 0.0f;   // 이전 프레임의 시간
 
 // UI 모드 토글
+// true: UI 표시 및 마우스 커서 활성화, false: UI 숨김 및 마우스 커서 비활성화
 bool g_UiMode = false;
 
-// lighting parameters (ImGui로 조절)
-glm::vec3 gLightPos(1.2f, 1.0f, 2.0f);
-glm::vec3 gLightColor(1.0f, 1.0f, 1.0f);
+// 조명 설정
+glm::vec3 gLightPos(1.2f, 1.0f, 2.0f);      // 광원 위치
+glm::vec3 gLightColor(1.0f, 1.0f, 1.0f);    // 광원 색상 (흰색)
+float gAmbientStrength  = 0.526f;            // 환경광 강도
+float gDiffuseStrength  = 0.716f;            // 난반사 강도
+float gSpecularStrength = 2.0f;              // 정반사 강도
 
-// UI 기본값: Ambient 0.526, Diffuse 0.716, Specular 2.0
-float gAmbientStrength  = 0.526f;
-float gDiffuseStrength  = 0.716f;
-float gSpecularStrength = 2.0f;
+// 그림자 맵 설정
+const unsigned int SHADOW_WIDTH  = 1024;    // 그림자 맵 너비
+const unsigned int SHADOW_HEIGHT = 1024;    // 그림자 맵 높이
+unsigned int gDepthMapFBO = 0;              // 그림자 맵 프레임버퍼
+unsigned int gDepthMap    = 0;              // 그림자 맵 텍스처
 
+// 게임 오브젝트 포인터
+Enemy* gEnemyPtr = nullptr;        // 적 캐릭터 포인터
+Player* gPlayerPtr = nullptr;      // 플레이어 캐릭터 포인터
+Background* gBackgroundPtr = nullptr;  // 배경 포인터
+#pragma endregion
 
-
-// shadow mapping용 해상도 및 FBO/텍스처 전역 변수 선언
-const unsigned int SHADOW_WIDTH  = 1024;
-const unsigned int SHADOW_HEIGHT = 1024;
-unsigned int gDepthMapFBO = 0;
-unsigned int gDepthMap    = 0;
-
-// 월드 공간에서 큐브 위치들
-const glm::vec3 gCubePositions[] = {
-	glm::vec3(0.0f,  0.0f,  0.0f),
-	glm::vec3(2.0f,  5.0f, -15.0f),
-	glm::vec3(-1.5f, -2.2f, -2.5f),
-	glm::vec3(-3.8f, -2.0f, -12.3f),
-	glm::vec3(2.4f, -0.4f, -3.5f),
-	glm::vec3(-1.7f,  3.0f, -7.5f),
-	glm::vec3(1.3f, -2.0f, -2.5f),
-	glm::vec3(1.5f,  2.0f, -2.5f),
-	glm::vec3(1.5f,  0.2f, -1.5f),
-	glm::vec3(-1.3f,  1.0f, -1.5f)
-};
-const unsigned int gCubeCount = sizeof(gCubePositions) / sizeof(glm::vec3);
-
-constexpr size_t MAX_BONES_SHADER = 100;
-std::vector<glm::mat4> gIdentityBones(MAX_BONES_SHADER, glm::mat4(1.0f));
-glm::vec3 gBackgroundRotateDeg(-90.0f, 0.0f, 0.0f);
-
-// 애니메이션 상태 로깅
-std::string gEnemyAnimState = "idle";
-std::string gPlayerAnimState = "idle";
-
-struct CharacterStatus
+#pragma region Main
+int main()
 {
-	const char* name;
-	int hp;
-};
-
-CharacterStatus gEnemyStatus{ "Enemy", 100 };
-CharacterStatus gPlayerStatus{ "Player", 100 };
-
-inline void StartEnemyDying();
-
-// 애니메이션 전역 포인터/상태 (ImGui 버튼 등에서 접근)
-Animation* gIdleAnimPtr = nullptr;
-Animation* gAltAnimPtr = nullptr;
-Animator*  gAnimatorPtr = nullptr;
-float gAltDurationSec = 1.0f;
-float gAltPlayTimer = 0.0f;
-bool  gAttackPlaying = false;
-Animation* gEnemyStunAnimPtr = nullptr;
-Animation* gEnemyPunchAnimPtr = nullptr;
-Animation* gEnemyDyingAnimPtr = nullptr;
-float gEnemyStunDurationSec = 1.0f;
-float gEnemyPunchDurationSec = 1.0f;
-float gEnemyDyingDurationSec = 1.0f;
-float gEnemyStunTimer = 0.0f;
-float gEnemyPunchTimer = 0.0f;
-float gEnemyDyingTimer = 0.0f;
-bool  gEnemyStunPlaying = false;
-bool  gEnemyPunchPlaying = false;
-bool  gEnemyDyingPlaying = false;
-bool  gEnemyDyingDone = false;
-// 필요 시 수동으로 스윙 길이를 덮어쓰기 (0이면 자동 계산값 사용)
-float gEnemyPunchDurationOverrideSec = 0.0f; // 필요시 수동 설정 (0이면 자동)
-
-// 플레이어 애니메이션 전역 포인터/상태
-Animation* gPlayerIdleAnimPtr = nullptr;
-Animation* gPlayerAttackAnimPtr = nullptr;
-Animation* gPlayerSlashAnimPtr = nullptr;
-Animation* gPlayerCastAnimPtr = nullptr;
-Animator*  gPlayerAnimatorPtr = nullptr;
-float gPlayerAttackDurationSec = 1.0f;
-float gPlayerSlashDurationSec = 1.0f;
-float gPlayerCastDurationSec = 1.0f;
-float gPlayerAttackTimer = 0.0f;
-float gPlayerSlashTimer = 0.0f;
-float gPlayerCastTimer = 0.0f;
-bool  gPlayerAttackPlaying = false;
-bool  gPlayerSlashPlaying = false;
-bool  gPlayerCastPlaying = false;
-bool  gPlayerAttackRequested = false;
-
-inline void LogAnimChange(const char* who, const char* state, std::string& prev)
-{
-	if (prev != state)
-	{
-		prev = state;
-		std::cout << "[Anim] " << who << " -> " << state << std::endl;
-	}
-}
-
-inline void ApplyDamage(CharacterStatus& target, int amount, const char* source)
-{
-	target.hp = std::max(0, target.hp - amount);
-	std::cout << "[HP] " << target.name << " -" << amount << " (from " << source << ") -> " << target.hp << std::endl;
-
-	// 적 HP 0 시 사망 애니메이션 트리거
-	if (&target == &gEnemyStatus && target.hp == 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-	{
-		StartEnemyDying();
-	}
-}
-
-inline void LogAnimStart(const char* who, const char* state, double durationSec)
-{
-	// 남은 시간(초) 기준으로 출력
-	std::cout << "[Anim] " << who << " " << state << " start, remaining=" << durationSec << " sec" << std::endl;
-}
-
-inline void StartEnemyDying()
-{
-	if (!gAnimatorPtr || !gEnemyDyingAnimPtr) return;
-	gAnimatorPtr->PlayAnimation(gEnemyDyingAnimPtr);
-	LogAnimChange("Enemy", "dying", gEnemyAnimState);
-	LogAnimStart("Enemy", "dying", gEnemyDyingDurationSec);
-	gEnemyDyingPlaying = true;
-	gEnemyDyingDone = false;
-	gEnemyDyingTimer = 0.0f;
-	// 다른 적 액션 중단
-	gAttackPlaying = false;
-	gEnemyStunPlaying = false;
-	gEnemyPunchPlaying = false;
-}
-
-// ==========================================
-// main
-// ==========================================
-int main() {
-
-	// 1. GLFW + Window 생성
+	// ========== 초기화 단계 ==========
+	
+	// 1. GLFW 초기화 및 윈도우 생성
+	// OpenGL 컨텍스트를 만들기 위한 윈도우를 생성합니다.
 	GLFWwindow* window = initGLFWAndCreateWindow(SCR_WIDTH, SCR_HEIGHT, "LightingMaps");
 	if (!window) return -1;
-
+	
 	// 2. GLAD 초기화
-	if (!initGLAD()) {
-		glfwTerminate();
-		return -1;
-	}
-
-	// 3. 콜백 등록 및 마우스 모드 설정
+	// OpenGL 함수 포인터를 로드합니다.
+	if (!initGLAD()) { glfwTerminate(); return -1; }
+	
+	// 3. 콜백 함수 설정
+	// 키보드, 마우스, 창 크기 변경 등의 이벤트를 처리할 함수들을 등록합니다.
 	setupCallbacks(window);
-
+	
 	// 4. ImGui 초기화
+	// 디버깅용 UI 라이브러리를 초기화합니다.
 	initImGui(window);
 
-	// 5. 쉐이더 생성
-	Shader lightingShader("shaders/basic_lighting_tex.vs", "shaders/basic_lighting_tex.fs");
-	Shader lightCubeShader("shaders/light_cube.vs", "shaders/light_cube.fs");
+	// ========== 셰이더 로드 ==========
+	
+	// 그림자 맵 생성용 셰이더 (정적 모델용)
 	Shader depthShader("shaders/shadow_depth.vs", "shaders/shadow_depth.fs");
+	
+	// 메인 렌더링용 셰이더 (스켈레탈 애니메이션 지원)
 	Shader skinnedShader("shaders/animated_model.vs", "shaders/animated_model.fs");
+	
+	// 그림자 맵 생성용 셰이더 (애니메이션 모델용)
 	Shader depthAnimShader("shaders/shadow_depth_anim.vs", "shaders/shadow_depth.fs");
+	
+	// 스카이박스 렌더링용 셰이더
 	Shader skyboxShader("shaders/skybox.vs", "shaders/skybox.fs");
 
-	// 6. 깊이버퍼 사용
+	// 깊이 테스트 활성화 (물체가 앞뒤로 올바르게 그려지도록)
 	glEnable(GL_DEPTH_TEST);
 
-	// 7. 정점 데이터, VAO/VBO, 광원용 VAO 설정
-	unsigned int VBO = 0, cubeVAO = 0, lightVAO = 0;
-	setupCubeData(VBO, cubeVAO, lightVAO);
-
-	// Skybox VAO/VBO 및 큐브맵 텍스처
+	// ========== 스카이박스 초기화 ==========
+	
+	// 스카이박스 VAO, VBO 생성 및 HDR 큐브맵 텍스처 로드
 	unsigned int skyboxVAO = 0, skyboxVBO = 0;
-	setupSkyboxData(skyboxVAO, skyboxVBO);
-	std::vector<std::string> skyboxFaces = {
-		"assets/skybox/right.hdr",
-		"assets/skybox/left.hdr",
-		"assets/skybox/top.hdr",
-		"assets/skybox/bottom.hdr",
-		"assets/skybox/front.hdr",
-		"assets/skybox/back.hdr"
-	};
-	unsigned int cubemapTexture = loadCubemap(skyboxFaces);
-	skyboxShader.use();
-	skyboxShader.setInt("skybox", 0);
+	unsigned int cubemapTexture = initSkybox(skyboxShader, skyboxVAO, skyboxVBO);
 
-	// 8. 텍스처 로드 (diffuse, specular)
-	unsigned int diffuseMap  = loadTexture2D("assets/container2.png");
-	unsigned int specularMap = loadTexture2D("assets/container2_specular.png");
+	// ========== 게임 오브젝트 초기화 ==========
+	
+	// 적 캐릭터 생성 및 초기화
+	// 모델과 애니메이션을 로드하고 기본 상태로 설정합니다.
+	Enemy enemy;
+	if (!enemy.Init()) { std::cerr << "Failed to init Enemy" << std::endl; return -1; }
+	gEnemyPtr = &enemy;
 
-	if (diffuseMap == 0 || specularMap == 0) {
-		std::cerr << "Texture load failed. Check assets paths.\n";
+	// 플레이어 캐릭터 생성 및 초기화
+	// 모델과 애니메이션을 로드하고 기본 상태로 설정합니다.
+	Player player;
+	if (!player.Init()) { std::cerr << "Failed to init Player" << std::endl; return -1; }
+	gPlayerPtr = &player;
+
+	// 플레이어와 적의 상호작용 설정
+	player.SetAttackTarget(&enemy);  // 플레이어의 공격 대상 = 적
+	enemy.SetPunchTarget(&player.Status());  // 적의 펀치 대상 = 플레이어
+	// 플레이어의 액션이 끝나면 적이 스턴 상태가 되도록 콜백 설정
+	player.SetOnActionFinished([&enemy]() { enemy.TriggerStunSequence(); });
+	std::cout << "[Init] Enemy and Player initialized" << std::endl;
+
+	// 배경 모델 로드 및 초기화
+	Background background;
+	if (!background.Init("assets/BackGround/sNOWlaNDSCAPE.fbx")) {
+		std::cerr << "Failed to init Background" << std::endl;
+		return -1;
 	}
+	// 배경 위치, 회전, 크기 설정
+	background.SetTransform(glm::vec3(0.0f, -2.0f, 0.0f), glm::vec3(-90.0f, 0.0f, 0.0f), 10.0f);
+	gBackgroundPtr = &background;
 
-	// 재질 텍스처 유닛 연결
-	lightingShader.use();
-	lightingShader.setInt("material.diffuse", 0);
-	lightingShader.setInt("material.specular", 1);
-
-
-
-    // === 모델 및 애니메이션 로딩 ===
-    // IdleMonster.fbx에 메시 + 기본 애니메이션 포함
-    Model nanosuit("assets/models/Eemy/IdleMonster.fbx");
-    Animation idleAnim("assets/models/Eemy/IdleMonster.fbx", &nanosuit);
-
-    // 추가 애니메이션: 동일 리깅의 다른 FBX를 로드해 10초 후 전환합니다.
-    // 파일명을 원하는 애니메이션 FBX로 교체하세요.
-    Animation altAnim("assets/models/Eemy/AltAnim.fbx", &nanosuit);
-	Animation enemyStun("assets/models/Eemy/Stun.fbx", &nanosuit);
-	Animation enemyPunch("assets/models/Eemy/Mutant Punch.fbx", &nanosuit);
-	Animation enemyDying("assets/models/Eemy/Mutant Dying.fbx", &nanosuit);
-    gIdleAnimPtr = &idleAnim;
-    gAltAnimPtr = &altAnim;
-	gEnemyStunAnimPtr = &enemyStun;
-	gEnemyPunchAnimPtr = &enemyPunch;
-	gEnemyDyingAnimPtr = &enemyDying;
-
-    Animator animator(&idleAnim);
-    gAnimatorPtr = &animator;
-    gAltDurationSec = altAnim.GetDuration() / std::max(altAnim.GetTicksPerSecond(), 1.0f);
-    if (gAltDurationSec <= 0.0f) gAltDurationSec = 1.0f; // 안전장치
-	gEnemyStunDurationSec = enemyStun.GetDuration() / std::max(enemyStun.GetTicksPerSecond(), 1.0f);
-	gEnemyPunchDurationSec = enemyPunch.GetDuration() / std::max(enemyPunch.GetTicksPerSecond(), 1.0f);
-	gEnemyDyingDurationSec = enemyDying.GetDuration() / std::max(enemyDying.GetTicksPerSecond(), 1.0f);
-	// 스턴/스윙 길이가 0으로 들어오는 경우 최소 1초로 보정
-	if (gEnemyStunDurationSec < 0.1f) gEnemyStunDurationSec = 1.0f;
-	if (gEnemyPunchDurationOverrideSec > 0.0f)
-		gEnemyPunchDurationSec = gEnemyPunchDurationOverrideSec;
-	else if (gEnemyPunchDurationSec < 0.1f)
-		gEnemyPunchDurationSec = 1.0f;
-	if (gEnemyDyingDurationSec < 0.1f) gEnemyDyingDurationSec = 1.0f;
-
-    gAttackPlaying = false;
-    gAltPlayTimer = 0.0f; // 대체 애니메이션 유지 시간
-	gEnemyStunPlaying = false;
-	gEnemyPunchPlaying = false;
-	gEnemyDyingPlaying = false;
-	gEnemyDyingDone = false;
-	gEnemyStunTimer = gEnemyPunchTimer = 0.0f;
-	gEnemyDyingTimer = 0.0f;
-
-	// 플레이어 모델 및 애니메이션
-	Model playerModel("assets/models/Player/IdlePlayer.fbx");
-	Animation playerIdle("assets/models/Player/IdlePlayer.fbx", &playerModel);
-	Animation playerAttack("assets/models/Player/AttackPlayer.fbx", &playerModel);
-	Animation playerSlash("assets/models/Player/SlashPlayer.fbx", &playerModel);
-	Animation playerCast("assets/models/Player/CastingPlayer.fbx", &playerModel);
-	Animator playerAnimator(&playerIdle);
-	gPlayerIdleAnimPtr = &playerIdle;
-	gPlayerAttackAnimPtr = &playerAttack;
-	gPlayerSlashAnimPtr = &playerSlash;
-	gPlayerCastAnimPtr = &playerCast;
-	gPlayerAnimatorPtr = &playerAnimator;
-	gPlayerAttackDurationSec = playerAttack.GetDuration() / std::max(playerAttack.GetTicksPerSecond(), 1.0f);
-	gPlayerSlashDurationSec = playerSlash.GetDuration() / std::max(playerSlash.GetTicksPerSecond(), 1.0f);
-	gPlayerCastDurationSec = playerCast.GetDuration() / std::max(playerCast.GetTicksPerSecond(), 1.0f);
-	if (gPlayerAttackDurationSec <= 0.0f) gPlayerAttackDurationSec = 1.0f;
-	if (gPlayerSlashDurationSec <= 0.0f) gPlayerSlashDurationSec = 1.0f;
-	if (gPlayerCastDurationSec <= 0.0f) gPlayerCastDurationSec = 1.0f;
-	gPlayerAttackPlaying = false;
-	gPlayerSlashPlaying = false;
-	gPlayerCastPlaying = false;
-	gPlayerAttackRequested = false;
-	gPlayerAttackTimer = 0.0f;
-	gPlayerSlashTimer = 0.0f;
-	gPlayerCastTimer = 0.0f;
-
-	// 초기 상태 로그 (idle 한 번만)
-	LogAnimChange("Enemy", "idle", gEnemyAnimState);
-	LogAnimChange("Player", "idle", gPlayerAnimState);
-
-	// 배경 모델 (실제 파일명: sNOWlaNDSCAPE.fbx)
-	Model backgroundModel("assets/BackGround/sNOWlaNDSCAPE.fbx");
-
-	// 9. Shadow map FBO 및 텍스처 설정
+	// ========== 그림자 맵 초기화 ==========
+	
+	// 그림자를 만들기 위한 깊이 맵 프레임버퍼와 텍스처 생성
 	setupShadowMap(gDepthMapFBO, gDepthMap);
 
-	// 렌더 루프
-while (!glfwWindowShouldClose(window)) {
-
-    float currentFrame = static_cast<float>(glfwGetTime());
-    deltaTime = currentFrame - lastFrame;
-    lastFrame = currentFrame;
-
-    processInput(window);
-
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-    buildImGuiUI();
-
-    // 입력 기반 카메라 업데이트는 비활성화 (고정값 사용)
-
-	// 애니메이션 업데이트
-	// 적: 사망 완료 시 더 이상 업데이트하지 않고 마지막 포즈 유지
-	if (!gEnemyDyingDone)
-		animator.UpdateAnimation(deltaTime);
-	if (gPlayerAnimatorPtr) gPlayerAnimatorPtr->UpdateAnimation(deltaTime);
-
-	// 스페이스 키로 적 공격(altAnim) 트리거, 재생이 끝나면 idle로 복귀
-	static int prevSpaceState = GLFW_RELEASE;
-	int spaceState = glfwGetKey(window, GLFW_KEY_SPACE);
-	bool spacePressed = (spaceState == GLFW_PRESS && prevSpaceState == GLFW_RELEASE);
-	prevSpaceState = spaceState;
-
-	// ImGui가 키보드를 잡고 있거나 UI 모드면 무시
-	bool blockInput = g_UiMode || ImGui::GetIO().WantCaptureKeyboard;
-
-	if (!blockInput && spacePressed && !gAttackPlaying && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
+	// ========== 메인 게임 루프 ==========
+	
+	while (!glfwWindowShouldClose(window))
 	{
-		animator.PlayAnimation(&altAnim);
-		LogAnimChange("Enemy", "attack", gEnemyAnimState);
-		LogAnimStart("Enemy", "attack", gAltDurationSec);
-		ApplyDamage(gPlayerStatus, 10, "Enemy attack");
-		gAttackPlaying = true;
-		gAltPlayTimer = 0.0f;
+		// 델타 타임 계산 (이전 프레임과의 시간 차이)
+		// 애니메이션과 물리 시뮬레이션에 사용됩니다.
+		float currentFrame = static_cast<float>(glfwGetTime());
+		deltaTime = currentFrame - lastFrame;
+		lastFrame = currentFrame;
+
+		// 입력 처리 (ESC 키로 종료 등)
+		processInput(window);
+
+		// ImGui 프레임 시작
+		// UI를 그리기 전에 프레임을 초기화합니다.
+		ImGui_ImplOpenGL3_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+		buildImGuiUI();  // HP 바, 버튼 등 UI 요소 생성
+
+		// 게임 로직 업데이트
+		// 각 캐릭터의 애니메이션 타이머와 상태를 업데이트합니다.
+		enemy.UpdateActions(deltaTime);
+		player.UpdateActions(deltaTime);
+
+		// ========== Pass 1: 그림자 맵 생성 ==========
+		// 광원의 시점에서 장면을 렌더링하여 깊이 정보만 저장합니다.
+		
+		// 광원의 변환 행렬 계산 (광원 위치에서 장면을 바라보는 행렬)
+		glm::mat4 lightSpaceMatrix = computeLightSpaceMatrix();
+		
+		// 그림자 맵 해상도로 뷰포트 설정
+		glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+		
+		// 그림자 맵 프레임버퍼에 바인딩
+		glBindFramebuffer(GL_FRAMEBUFFER, gDepthMapFBO);
+		glClear(GL_DEPTH_BUFFER_BIT);  // 깊이 버퍼만 클리어 (색상은 필요 없음)
+
+		// 정적 모델용 깊이 셰이더 설정
+		depthShader.use();
+		depthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+		
+		// 애니메이션 모델용 깊이 셰이더 설정
+		depthAnimShader.use();
+		depthAnimShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+
+		// 각 오브젝트를 그림자 맵에 렌더링 (깊이만 기록)
+		background.RenderDepth(depthAnimShader, 30.0f);
+		enemy.RenderDepth(depthAnimShader, glm::vec3(0.0f, -1.75f, 0.0f), 0.002f);
+		player.RenderDepth(depthAnimShader, glm::vec3(2.0f, -1.75f, 0.0f), 0.002f);
+
+		// 기본 프레임버퍼로 복원
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+		// ========== Pass 2: 메인 씬 렌더링 ==========
+		// 카메라의 시점에서 조명과 그림자가 적용된 장면을 렌더링합니다.
+		
+		// 화면 해상도로 뷰포트 복원
+		glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+		
+		// 화면 클리어 (어두운 청록색 배경)
+		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		// 메인 씬 렌더링 (배경, 플레이어, 적)
+		// 조명, 그림자, 텍스처가 모두 적용됩니다.
+		drawScene(skinnedShader, gDepthMap, lightSpaceMatrix);
+
+		// ========== 스카이박스 렌더링 ==========
+		// 배경 하늘을 그립니다. 항상 카메라 뒤에서 렌더링됩니다.
+		
+		// 깊이 테스트를 변경 (스카이박스는 항상 배경으로)
+		glDepthFunc(GL_LEQUAL);
+		
+		skyboxShader.use();
+		// 카메라의 회전만 사용 (이동은 무시)
+		glm::mat4 view = glm::mat4(glm::mat3(camera.GetViewMatrix()));
+		glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+		skyboxShader.setMat4("view", view);
+		skyboxShader.setMat4("projection", projection);
+		
+		// 스카이박스 그리기
+		glBindVertexArray(skyboxVAO);
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+		glDrawArrays(GL_TRIANGLES, 0, 36);  // 큐브는 36개 정점 (6면 × 2삼각형 × 3정점)
+		glBindVertexArray(0);
+		
+		// 깊이 테스트를 원래대로 복원
+		glDepthFunc(GL_LESS);
+
+		// ImGui 렌더링
+		// UI 요소들을 화면에 그립니다.
+		ImGui::Render();
+		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+		// 더블 버퍼링: 백 버퍼와 프론트 버퍼를 교체
+		// 백 버퍼에 그린 내용이 화면에 표시됩니다.
+		glfwSwapBuffers(window);
+		
+		// 이벤트 처리 (키보드, 마우스 입력 등)
+		glfwPollEvents();
 	}
 
-	if (gAttackPlaying)
-	{
-		gAltPlayTimer += deltaTime;
-		if (gAltPlayTimer >= gAltDurationSec)
-		{
-			animator.PlayAnimation(&idleAnim);
-			gAttackPlaying = false;
-		}
-	}
-
-	// 플레이어 공격/슬래시/캐스트 트리거(버튼에서 요청)
-	if (gPlayerAttackRequested && !gPlayerAttackPlaying && gPlayerAnimatorPtr && gPlayerAttackAnimPtr)
-	{
-		gPlayerAnimatorPtr->PlayAnimation(gPlayerAttackAnimPtr);
-		LogAnimStart("Player", "attack", gPlayerAttackDurationSec);
-		ApplyDamage(gEnemyStatus, 10, "Player attack");
-		gPlayerAttackPlaying = true;
-		gPlayerSlashPlaying = false;
-		gPlayerCastPlaying = false;
-		gPlayerAttackTimer = 0.0f;
-		gPlayerAttackRequested = false;
-	}
-	if (gPlayerAttackPlaying && gPlayerAnimatorPtr)
-	{
-		gPlayerAttackTimer += deltaTime;
-		if (gPlayerAttackTimer >= gPlayerAttackDurationSec)
-		{
-			gPlayerAnimatorPtr->PlayAnimation(gPlayerIdleAnimPtr);
-			gPlayerAttackPlaying = false;
-			// 플레이어 공격 종료 시 적 스턴 시작 (단, 적이 살아있을 때만)
-			if (gAnimatorPtr && gEnemyStunAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-			{
-				gAnimatorPtr->PlayAnimation(gEnemyStunAnimPtr);
-				LogAnimChange("Enemy", "stun", gEnemyAnimState);
-				gEnemyStunPlaying = true;
-				gEnemyPunchPlaying = false;
-				gEnemyStunTimer = 0.0f;
-				gEnemyPunchTimer = 0.0f;
-			}
-		}
-	}
-	if (gPlayerSlashPlaying && gPlayerAnimatorPtr)
-	{
-		gPlayerSlashTimer += deltaTime;
-		if (gPlayerSlashTimer >= gPlayerSlashDurationSec)
-		{
-			gPlayerAnimatorPtr->PlayAnimation(gPlayerIdleAnimPtr);
-			gPlayerSlashPlaying = false;
-			// 슬래시 종료 시 적 반격 시퀀스(스턴 -> 펀치) 시작
-			if (gAnimatorPtr && gEnemyStunAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-			{
-				gAnimatorPtr->PlayAnimation(gEnemyStunAnimPtr);
-				LogAnimChange("Enemy", "stun", gEnemyAnimState);
-				gEnemyStunPlaying = true;
-				gEnemyPunchPlaying = false;
-				gEnemyStunTimer = 0.0f;
-				gEnemyPunchTimer = 0.0f;
-			}
-		}
-	}
-	if (gPlayerCastPlaying && gPlayerAnimatorPtr)
-	{
-		gPlayerCastTimer += deltaTime;
-		if (gPlayerCastTimer >= gPlayerCastDurationSec)
-		{
-			gPlayerAnimatorPtr->PlayAnimation(gPlayerIdleAnimPtr);
-			gPlayerCastPlaying = false;
-			// 캐스팅 종료 시 적 반격 시퀀스(스턴 -> 펀치) 시작
-			if (gAnimatorPtr && gEnemyStunAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-			{
-				gAnimatorPtr->PlayAnimation(gEnemyStunAnimPtr);
-				LogAnimChange("Enemy", "stun", gEnemyAnimState);
-				gEnemyStunPlaying = true;
-				gEnemyPunchPlaying = false;
-				gEnemyStunTimer = 0.0f;
-				gEnemyPunchTimer = 0.0f;
-			}
-		}
-	}
-
-	// 적 스턴/펀치 시퀀스 처리 (사망 상태면 수행하지 않음)
-	if (gEnemyStunPlaying && gAnimatorPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-	{
-		float dt = std::min(deltaTime, 0.1f); // 프레임이 길어도 타이머가 과도하게 증가하지 않도록 캡
-		gEnemyStunTimer += dt;
-		if (gEnemyStunTimer >= gEnemyStunDurationSec)
-		{
-			// 스턴 종료 -> 펀치 시작
-			if (gEnemyPunchAnimPtr)
-			{
-				gAnimatorPtr->PlayAnimation(gEnemyPunchAnimPtr);
-				LogAnimChange("Enemy", "punch", gEnemyAnimState);
-				LogAnimStart("Enemy", "punch", gEnemyPunchDurationSec);
-				ApplyDamage(gPlayerStatus, 10, "Enemy punch");
-				gEnemyPunchPlaying = true;
-				gEnemyPunchTimer = 0.0f;
-			}
-			gEnemyStunPlaying = false;
-		}
-	}
-	if (gEnemyPunchPlaying && gAnimatorPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-	{
-		float dt = std::min(deltaTime, 0.1f);
-		gEnemyPunchTimer += dt;
-		if (gEnemyPunchTimer >= gEnemyPunchDurationSec && gIdleAnimPtr)
-		{
-			// 펀치 종료 -> idle 복귀
-			gAnimatorPtr->PlayAnimation(gIdleAnimPtr);
-			LogAnimChange("Enemy", "idle", gEnemyAnimState);
-			gEnemyPunchPlaying = false;
-		}
-	}
-
-	// 적 사망 애니메이션 진행/정지 처리
-	if (gEnemyDyingPlaying && gAnimatorPtr)
-	{
-		float dt = std::min(deltaTime, 0.1f);
-		gEnemyDyingTimer += dt;
-		if (gEnemyDyingTimer >= gEnemyDyingDurationSec)
-		{
-			gEnemyDyingPlaying = false;
-			gEnemyDyingDone = true; // 이후 업데이트 정지 → 마지막 포즈 유지
-		}
-	}
-
-    // 0. 빛 시점 행렬 계산
-    glm::mat4 lightSpaceMatrix = computeLightSpaceMatrix();
-
-    // 1패스: shadow map용 깊이 렌더링 패스 수행함
-    glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
-    glBindFramebuffer(GL_FRAMEBUFFER, gDepthMapFBO);
-    glClear(GL_DEPTH_BUFFER_BIT);
-
-    depthShader.use();
-    depthShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
-
-    const size_t MAX_BONES_SHADER = 100;
-
-    depthAnimShader.use();
-    depthAnimShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
-
-    // 배경 모델 깊이 렌더 (본 없음 → identity), 스케일 1로 조정
-    {
-        glm::mat4 modelMat = glm::mat4(1.0f);
-        modelMat = glm::translate(modelMat, glm::vec3(0.0f, -2.0f, 0.0f));
-        modelMat = glm::scale(modelMat, glm::vec3(1.0f));
-        depthAnimShader.setMat4("model", modelMat);
-
-        size_t boneCount = std::min(gIdentityBones.size(), MAX_BONES_SHADER);
-        for (size_t i = 0; i < boneCount; ++i)
-        {
-            depthAnimShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", gIdentityBones[i]);
-        }
-        backgroundModel.Draw(depthAnimShader);
-    }
-
-    depthAnimShader.use();
-    depthAnimShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
-
-    // 배경 모델 깊이 렌더 (본 없음 → identity), 스케일 30
-    {
-        glm::mat4 modelMat = glm::mat4(1.0f);
-        modelMat = glm::translate(modelMat, glm::vec3(0.0f, -2.0f, 0.0f));
-        modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.x), glm::vec3(1, 0, 0));
-        modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.y), glm::vec3(0, 1, 0));
-        modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.z), glm::vec3(0, 0, 1));
-        modelMat = glm::scale(modelMat, glm::vec3(30.0f));
-        depthAnimShader.setMat4("model", modelMat);
-
-        size_t boneCount = std::min(gIdentityBones.size(), MAX_BONES_SHADER);
-        for (size_t i = 0; i < boneCount; ++i)
-        {
-            depthAnimShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", gIdentityBones[i]);
-        }
-        backgroundModel.Draw(depthAnimShader);
-    }
-
-    // 적 모델 깊이 렌더
-    {
-        glm::mat4 modelMat = glm::mat4(1.0f);
-        modelMat = glm::translate(modelMat, glm::vec3(0.0f, -1.75f, 0.0f));
-        modelMat = glm::scale(modelMat, glm::vec3(0.002f));
-        depthAnimShader.setMat4("model", modelMat);
-
-        auto transforms = animator.GetFinalBoneMatrices();
-        size_t boneCount = std::min(transforms.size(), MAX_BONES_SHADER);
-        for (size_t i = 0; i < boneCount; ++i)
-        {
-            depthAnimShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", transforms[i]);
-        }
-        nanosuit.Draw(depthAnimShader);
-    }
-
-    // 플레이어 모델 깊이 렌더
-    if (gPlayerAnimatorPtr)
-    {
-        glm::mat4 modelMat = glm::mat4(1.0f);
-        modelMat = glm::translate(modelMat, glm::vec3(2.0f, -1.75f, 0.0f)); // 플레이어 위치 오프셋
-        modelMat = glm::scale(modelMat, glm::vec3(0.002f));
-        depthAnimShader.setMat4("model", modelMat);
-
-        auto transforms = gPlayerAnimatorPtr->GetFinalBoneMatrices();
-        size_t boneCount = std::min(transforms.size(), MAX_BONES_SHADER);
-        for (size_t i = 0; i < boneCount; ++i)
-        {
-            depthAnimShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", transforms[i]);
-        }
-        playerModel.Draw(depthAnimShader);
-    }
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-    // ===== 2패스: 실제 화면 렌더링 패스 수행함 =====
-    glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
-    glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    drawScene(lightingShader, skinnedShader, lightCubeShader,
-        cubeVAO, lightVAO,
-        diffuseMap, specularMap,
-        &backgroundModel,
-        &nanosuit, &animator,
-        &playerModel, gPlayerAnimatorPtr,
-        gDepthMap,           // shadow map 텍스처
-        lightSpaceMatrix);   // 빛 시점 행렬
-
-	// Skybox 렌더링 (항상 마지막, 깊이 함수 변경)
-	glDepthFunc(GL_LEQUAL);
-	skyboxShader.use();
-	glm::mat4 view = glm::mat4(glm::mat3(camera.GetViewMatrix())); // 위치 이동 제거
-	glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
-	skyboxShader.setMat4("view", view);
-	skyboxShader.setMat4("projection", projection);
-	glBindVertexArray(skyboxVAO);
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
-	glDrawArrays(GL_TRIANGLES, 0, 36);
-	glBindVertexArray(0);
-	glDepthFunc(GL_LESS);
-
-    // ImGui 렌더링
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-    glfwSwapBuffers(window);
-    glfwPollEvents();
-}
-
-
-	// 정리 작업
-	glDeleteVertexArrays(1, &cubeVAO);
-	glDeleteVertexArrays(1, &lightVAO);
-	glDeleteBuffers(1, &VBO);
-
+	// ========== 정리 ==========
+	
+	// 스카이박스 리소스 해제
+	glDeleteVertexArrays(1, &skyboxVAO);
+	glDeleteBuffers(1, &skyboxVBO);
+	
+	// ImGui 정리
 	shutdownImGui();
+	
+	// 윈도우 및 GLFW 정리
 	glfwDestroyWindow(window);
 	glfwTerminate();
 	return 0;
 }
+#pragma endregion
 
-// ==========================================
-// GLFW / GLAD / 콜백 / ImGui 초기화 함수들
-// ==========================================
+#pragma region Initialization
 
-// GLFW 초기화 + Window 생성
+// GLFW 초기화 및 윈도우 생성
+// OpenGL을 사용하기 위한 윈도우를 생성하고 컨텍스트를 설정합니다.
 GLFWwindow* initGLFWAndCreateWindow(int width, int height, const char* title)
 {
+	// GLFW 라이브러리 초기화
 	if (!glfwInit()) {
 		std::cerr << "Failed to initialize GLFW" << std::endl;
 		return nullptr;
 	}
+	
+	// OpenGL 버전 설정 (3.3)
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+	// 코어 프로파일 사용 (레거시 함수 제거)
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
+	// 윈도우 생성
 	GLFWwindow* window = glfwCreateWindow(width, height, title, nullptr, nullptr);
 	if (!window) {
 		std::cerr << "Failed to create GLFW window" << std::endl;
 		glfwTerminate();
 		return nullptr;
 	}
+	
+	// 이 윈도우를 현재 OpenGL 컨텍스트로 설정
 	glfwMakeContextCurrent(window);
 	return window;
 }
 
 // GLAD 초기화
+// OpenGL 함수 포인터를 로드합니다.
+// OpenGL 함수들은 런타임에 동적으로 로드되어야 합니다.
 bool initGLAD()
 {
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
@@ -696,730 +336,390 @@ bool initGLAD()
 	return true;
 }
 
-// 콜백 등록 및 초기 입력 모드 설정
+// 콜백 함수 설정
+// 윈도우 이벤트(키보드, 마우스, 창 크기 변경 등)를 처리할 함수들을 등록합니다.
 void setupCallbacks(GLFWwindow* window)
 {
-	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-	glfwSetCursorPosCallback(window, mouse_callback);
-	glfwSetScrollCallback(window, scroll_callback);
-	glfwSetKeyCallback(window, key_callback);
-	glfwSetMouseButtonCallback(window, mouse_button_callback);
-
-	// 초기엔 FPS 모드로 시작 (커서 숨김)
+	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);  // 창 크기 변경
+	glfwSetCursorPosCallback(window, mouse_callback);                   // 마우스 이동
+	glfwSetScrollCallback(window, scroll_callback);                     // 마우스 휠
+	glfwSetKeyCallback(window, key_callback);                           // 키보드 입력
+	glfwSetMouseButtonCallback(window, mouse_button_callback);          // 마우스 버튼
+	// 마우스 커서를 숨김 (FPS 스타일 카메라 제어)
 	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 }
 
 // ImGui 초기화
+// 디버깅용 UI 라이브러리를 초기화합니다.
 void initImGui(GLFWwindow* window)
 {
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO(); (void)io;
-
-	// 우리가 콜백을 직접 전달할 것이므로 false
+	// GLFW와 OpenGL 3.3용 ImGui 백엔드 초기화
 	ImGui_ImplGlfw_InitForOpenGL(window, false);
 	ImGui_ImplOpenGL3_Init("#version 330");
 }
 
-// ImGui 종료
+// ImGui 정리
+// 프로그램 종료 시 ImGui 리소스를 해제합니다.
 void shutdownImGui()
 {
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplGlfw_Shutdown();
 	ImGui::DestroyContext();
 }
+#pragma endregion
 
-// ==========================================
-// 데이터 설정: 정점/VAO/VBO, 광원 VAO
-// ==========================================
+#pragma region Skybox
 
-void setupCubeData(unsigned int& VBO, unsigned int& cubeVAO, unsigned int& lightVAO)
-{
-	// position + normal + texcoord (8 floats)
-	float vertices[] = {
-		// positions          // normals           // texcoords
-		// 뒤쪽 면 (z = -0.5, normal = (0,0,-1))
-		-0.5f, -0.5f, -0.5f,   0.0f, 0.0f,-1.0f,   0.0f, 0.0f,
-		 0.5f, -0.5f, -0.5f,   0.0f, 0.0f,-1.0f,   1.0f, 0.0f,
-		 0.5f,  0.5f, -0.5f,   0.0f, 0.0f,-1.0f,   1.0f, 1.0f,
-		 0.5f,  0.5f, -0.5f,   0.0f, 0.0f,-1.0f,   1.0f, 1.0f,
-		-0.5f,  0.5f, -0.5f,   0.0f, 0.0f,-1.0f,   0.0f, 1.0f,
-		-0.5f, -0.5f, -0.5f,   0.0f, 0.0f,-1.0f,   0.0f, 0.0f,
-
-		// 앞쪽 면 (z = +0.5, normal = (0,0,1))
-		-0.5f, -0.5f,  0.5f,   0.0f, 0.0f, 1.0f,   0.0f, 0.0f,
-		 0.5f, -0.5f,  0.5f,   0.0f, 0.0f, 1.0f,   1.0f, 0.0f,
-		 0.5f,  0.5f,  0.5f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f,
-		 0.5f,  0.5f,  0.5f,   0.0f, 0.0f, 1.0f,   1.0f, 1.0f,
-		-0.5f,  0.5f,  0.5f,   0.0f, 0.0f, 1.0f,   0.0f, 1.0f,
-		-0.5f, -0.5f,  0.5f,   0.0f, 0.0f, 1.0f,   0.0f, 0.0f,
-
-		// 왼쪽 면 (x = -0.5, normal = (-1,0,0))
-		-0.5f,  0.5f,  0.5f,  -1.0f, 0.0f, 0.0f,   1.0f, 0.0f,
-		-0.5f,  0.5f, -0.5f,  -1.0f, 0.0f, 0.0f,   1.0f, 1.0f,
-		-0.5f, -0.5f, -0.5f,  -1.0f, 0.0f, 0.0f,   0.0f, 1.0f,
-		-0.5f, -0.5f, -0.5f,  -1.0f, 0.0f, 0.0f,   0.0f, 1.0f,
-		-0.5f, -0.5f,  0.5f,  -1.0f, 0.0f, 0.0f,   0.0f, 0.0f,
-		-0.5f,  0.5f,  0.5f,  -1.0f, 0.0f, 0.0f,   1.0f, 0.0f,
-
-		// 오른쪽 면 (x = +0.5, normal = (1,0,0))
-		 0.5f,  0.5f,  0.5f,   1.0f, 0.0f, 0.0f,   1.0f, 0.0f,
-		 0.5f,  0.5f, -0.5f,   1.0f, 0.0f, 0.0f,   1.0f, 1.0f,
-		 0.5f, -0.5f, -0.5f,   1.0f, 0.0f, 0.0f,   0.0f, 1.0f,
-		 0.5f, -0.5f, -0.5f,   1.0f, 0.0f, 0.0f,   0.0f, 1.0f,
-		 0.5f, -0.5f,  0.5f,   1.0f, 0.0f, 0.0f,   0.0f, 0.0f,
-		 0.5f,  0.5f,  0.5f,   1.0f, 0.0f, 0.0f,   1.0f, 0.0f,
-
-		 // 아래쪽 면 (y = -0.5, normal = (0,-1,0))
-		 -0.5f, -0.5f, -0.5f,   0.0f,-1.0f, 0.0f,   0.0f, 1.0f,
-		  0.5f, -0.5f, -0.5f,   0.0f,-1.0f, 0.0f,   1.0f, 1.0f,
-		  0.5f, -0.5f,  0.5f,   0.0f,-1.0f, 0.0f,   1.0f, 0.0f,
-		  0.5f, -0.5f,  0.5f,   0.0f,-1.0f, 0.0f,   1.0f, 0.0f,
-		 -0.5f, -0.5f,  0.5f,   0.0f,-1.0f, 0.0f,   0.0f, 0.0f,
-		 -0.5f, -0.5f, -0.5f,   0.0f,-1.0f, 0.0f,   0.0f, 1.0f,
-
-		 // 위쪽 면 (y = +0.5, normal = (0,1,0))
-		 -0.5f,  0.5f, -0.5f,   0.0f, 1.0f, 0.0f,   0.0f, 1.0f,
-		  0.5f,  0.5f, -0.5f,   0.0f, 1.0f, 0.0f,   1.0f, 1.0f,
-		  0.5f,  0.5f,  0.5f,   0.0f, 1.0f, 0.0f,   1.0f, 0.0f,
-		  0.5f,  0.5f,  0.5f,   0.0f, 1.0f, 0.0f,   1.0f, 0.0f,
-		 -0.5f,  0.5f,  0.5f,   0.0f, 1.0f, 0.0f,   0.0f, 0.0f,
-		 -0.5f,  0.5f, -0.5f,   0.0f, 1.0f, 0.0f,   0.0f, 1.0f
-	};
-
-	// 큐브용 VAO/VBO
-	glGenVertexArrays(1, &cubeVAO);
-	glGenBuffers(1, &VBO);
-
-	glBindVertexArray(cubeVAO);
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-	// position attribute (location = 0)
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-	glEnableVertexAttribArray(0);
-
-	// normal attribute (location = 1)
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
-	glEnableVertexAttribArray(1);
-
-	// texcoord attribute (location = 2)
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
-	glEnableVertexAttribArray(2);
-
-	// 광원용 VAO (position만 사용)
-	glGenVertexArrays(1, &lightVAO);
-	glBindVertexArray(lightVAO);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-	glEnableVertexAttribArray(0);
-
-	// VAO 해제
-	glBindVertexArray(0);
-}
-
-// ==========================================
-// 텍스처 설정 함수
-// ==========================================
-
-unsigned int loadTexture2D(const char* path)
-{
-	unsigned int textureID;
-	glGenTextures(1, &textureID);
-	glBindTexture(GL_TEXTURE_2D, textureID);
-
-	// wrapping / filtering 옵션
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-	int width, height, nrChannels;
-	stbi_set_flip_vertically_on_load(true); // 이미지 상하 반전
-	unsigned char* data = stbi_load(path, &width, &height, &nrChannels, 0);
-	if (data)
-	{
-		GLenum format = (nrChannels == 3) ? GL_RGB : GL_RGBA;
-		glTexImage2D(GL_TEXTURE_2D, 0, format,
-		             width, height, 0, format,
-		             GL_UNSIGNED_BYTE, data);
-		glGenerateMipmap(GL_TEXTURE_2D);
-	}
-	else
-	{
-		std::cout << "Failed to load texture: " << path << std::endl;
-		textureID = 0; // 실패 표시
-	}
-	stbi_image_free(data);
-
-	return textureID;
-}
-
-// ==========================================
-// Skybox 설정 함수
-// ==========================================
-
+// 스카이박스 정점 데이터 설정
+// 큐브의 6면을 구성하는 정점들을 GPU 버퍼에 업로드합니다.
 void setupSkyboxData(unsigned int& skyboxVAO, unsigned int& skyboxVBO)
 {
+	// 큐브의 정점 데이터 (6면, 각 면 2개 삼각형, 총 36개 정점)
+	// 정점은 -1 ~ 1 범위의 정규화된 좌표입니다.
 	float skyboxVertices[] = {
-		// positions          
-		-1.0f,  1.0f, -1.0f,
-		-1.0f, -1.0f, -1.0f,
-		 1.0f, -1.0f, -1.0f,
-		 1.0f, -1.0f, -1.0f,
-		 1.0f,  1.0f, -1.0f,
-		-1.0f,  1.0f, -1.0f,
-
-		-1.0f, -1.0f,  1.0f,
-		-1.0f, -1.0f, -1.0f,
-		-1.0f,  1.0f, -1.0f,
-		-1.0f,  1.0f, -1.0f,
-		-1.0f,  1.0f,  1.0f,
-		-1.0f, -1.0f,  1.0f,
-
-		 1.0f, -1.0f, -1.0f,
-		 1.0f, -1.0f,  1.0f,
-		 1.0f,  1.0f,  1.0f,
-		 1.0f,  1.0f,  1.0f,
-		 1.0f,  1.0f, -1.0f,
-		 1.0f, -1.0f, -1.0f,
-
-		-1.0f, -1.0f,  1.0f,
-		-1.0f,  1.0f,  1.0f,
-		 1.0f,  1.0f,  1.0f,
-		 1.0f,  1.0f,  1.0f,
-		 1.0f, -1.0f,  1.0f,
-		-1.0f, -1.0f,  1.0f,
-
-		-1.0f,  1.0f, -1.0f,
-		 1.0f,  1.0f, -1.0f,
-		 1.0f,  1.0f,  1.0f,
-		 1.0f,  1.0f,  1.0f,
-		-1.0f,  1.0f,  1.0f,
-		-1.0f,  1.0f, -1.0f,
-
-		-1.0f, -1.0f, -1.0f,
-		-1.0f, -1.0f,  1.0f,
-		 1.0f, -1.0f, -1.0f,
-		 1.0f, -1.0f, -1.0f,
-		-1.0f, -1.0f,  1.0f,
-		 1.0f, -1.0f,  1.0f
+		-1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f, -1.0f,
+		-1.0f, -1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f,
+		 1.0f, -1.0f, -1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
+		-1.0f, -1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f, -1.0f,  1.0f,
+		-1.0f,  1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f,
+		-1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f
 	};
 
+	// VAO, VBO 생성
 	glGenVertexArrays(1, &skyboxVAO);
 	glGenBuffers(1, &skyboxVBO);
+	
+	// VAO 바인딩 (이후 설정은 이 VAO에 저장됨)
 	glBindVertexArray(skyboxVAO);
+	
+	// VBO에 정점 데이터 업로드
 	glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
 	glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), &skyboxVertices, GL_STATIC_DRAW);
+	
+	// 정점 속성 설정 (위치만 사용, layout = 0)
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	
+	// 바인딩 해제
 	glBindVertexArray(0);
 }
 
+// 큐브맵 텍스처 로드
+// 6개의 이미지 파일을 읽어서 큐브맵 텍스처를 생성합니다.
+// HDR 이미지도 지원합니다.
 unsigned int loadCubemap(const std::vector<std::string>& faces)
 {
+	// HDR 파일인지 확인하는 람다 함수
 	auto isHDR = [](const std::string& path) {
 		auto lower = path;
 		std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 		return lower.rfind(".hdr") != std::string::npos || lower.rfind(".exr") != std::string::npos;
 	};
 
+	// 큐브맵 텍스처 생성
 	unsigned int textureID;
 	glGenTextures(1, &textureID);
 	glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
 
 	int width = 0, height = 0, nrChannels = 0;
-	stbi_set_flip_vertically_on_load(false); // 큐브맵은 뒤집지 않음
+	// 스카이박스는 Y축을 뒤집지 않음
+	stbi_set_flip_vertically_on_load(false);
 
+	// 6면의 이미지를 각각 로드
 	for (unsigned int i = 0; i < faces.size(); i++)
 	{
-		if (isHDR(faces[i]))
-		{
+		if (isHDR(faces[i])) {
+			// HDR 이미지 로드 (32비트 부동소수점)
 			float* data = stbi_loadf(faces[i].c_str(), &width, &height, &nrChannels, 0);
-			if (data)
-			{
+			if (data) {
 				GLenum format = (nrChannels == 4) ? GL_RGBA : GL_RGB;
-				GLenum internalFormat = (nrChannels == 4) ? GL_RGBA16F : GL_RGB16F;
+				GLenum internalFormat = (nrChannels == 4) ? GL_RGBA16F : GL_RGB16F;  // HDR용 16비트 부동소수점
+				// 큐브맵의 각 면에 이미지 데이터 설정
 				glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, internalFormat, width, height, 0, format, GL_FLOAT, data);
 				stbi_image_free(data);
+			} else {
+				std::cout << "Failed to load HDR cubemap: " << faces[i] << std::endl;
 			}
-			else
-			{
-				std::cout << "Failed to load HDR cubemap texture: " << faces[i] << std::endl;
-			}
-		}
-		else
-		{
+		} else {
+			// 일반 이미지 로드 (8비트 정수)
 			unsigned char* data = stbi_load(faces[i].c_str(), &width, &height, &nrChannels, 0);
-			if (data)
-			{
+			if (data) {
 				GLenum format = (nrChannels == 4) ? GL_RGBA : GL_RGB;
+				// 큐브맵의 각 면에 이미지 데이터 설정
 				glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
 				stbi_image_free(data);
-			}
-			else
-			{
-				std::cout << "Failed to load cubemap texture: " << faces[i] << std::endl;
+			} else {
+				std::cout << "Failed to load cubemap: " << faces[i] << std::endl;
 			}
 		}
 	}
 
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	// 텍스처 파라미터 설정
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);  // 축소 필터
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);  // 확대 필터
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);  // 경계 처리
 	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
 	return textureID;
 }
 
-// ==========================================
-// ImGui UI 구성 함수 (카메라 / 조명 설정창)
-// ==========================================
+// 스카이박스 초기화
+// 정점 데이터와 큐브맵 텍스처를 설정하고 셰이더에 텍스처 유닛을 연결합니다.
+unsigned int initSkybox(Shader& skyboxShader, unsigned int& skyboxVAO, unsigned int& skyboxVBO)
+{
+	// 스카이박스 정점 데이터 설정
+	setupSkyboxData(skyboxVAO, skyboxVBO);
 
+	// 6면의 이미지 파일 경로 (순서: 오른쪽, 왼쪽, 위, 아래, 앞, 뒤)
+	std::vector<std::string> skyboxFaces = {
+		"assets/skybox/right.hdr", "assets/skybox/left.hdr",
+		"assets/skybox/top.hdr",   "assets/skybox/bottom.hdr",
+		"assets/skybox/front.hdr", "assets/skybox/back.hdr"
+	};
+
+	// 큐브맵 텍스처 로드
+	unsigned int cubemapTexture = loadCubemap(skyboxFaces);
+	
+	// 셰이더에 텍스처 유닛 번호 설정
+	skyboxShader.use();
+	skyboxShader.setInt("skybox", 0);  // GL_TEXTURE0 사용
+	return cubemapTexture;
+}
+#pragma endregion
+
+#pragma region ImGui
+
+// ImGui UI 생성
+// HP 바와 애니메이션 제어 버튼을 표시합니다.
+// TAB 키를 눌러 UI 모드를 토글할 수 있습니다.
 void buildImGuiUI()
 {
-	if (!g_UiMode)
-		return;
+	// UI 모드가 꺼져있으면 아무것도 그리지 않음
+	if (!g_UiMode) return;
 
+	// HP 바를 그리는 람다 함수
+	auto DrawHpBars = []() {
+		const float maxHp = 100.0f;
+		// 현재 HP 가져오기
+		int enemyHp = gEnemyPtr ? gEnemyPtr->Status().hp : 0;
+		int playerHp = gPlayerPtr ? gPlayerPtr->Status().hp : 0;
+
+		ImGui::Text("HP");
+		// 적 HP 바 (빨간색)
+		ImGui::PushStyleColor(ImGuiCol_PlotHistogram, IM_COL32(200, 40, 40, 255));
+		ImGui::ProgressBar(enemyHp / maxHp, ImVec2(-1, 0), ("Enemy: " + std::to_string(enemyHp)).c_str());
+		ImGui::PopStyleColor();
+		// 플레이어 HP 바 (기본 색상)
+		ImGui::ProgressBar(playerHp / maxHp, ImVec2(-1, 0), ("Player: " + std::to_string(playerHp)).c_str());
+		ImGui::Separator();
+	};
+
+	// 첫 번째 UI 창: "Animation"
 	ImGui::Begin("Animation");
+	DrawHpBars();
 
-	// HP 바 표시
-	const float maxHp = 100.0f;
-	float enemyHpRatio = std::max(0.0f, std::min(1.0f, gEnemyStatus.hp / maxHp));
-	float playerHpRatio = std::max(0.0f, std::min(1.0f, gPlayerStatus.hp / maxHp));
-
-	ImGui::Text("HP");
-	ImGui::PushStyleColor(ImGuiCol_PlotHistogram, IM_COL32(200, 40, 40, 255)); // enemy: red
-	ImGui::ProgressBar(enemyHpRatio, ImVec2(-1, 0), ("Enemy HP: " + std::to_string(gEnemyStatus.hp)).c_str());
-	ImGui::PopStyleColor();
-	ImGui::ProgressBar(playerHpRatio, ImVec2(-1, 0), ("Player HP: " + std::to_string(gPlayerStatus.hp)).c_str());
-	ImGui::Separator();
-
-	ImGui::Text("Player Animation");
-	bool playerButtonDisabled = (gPlayerAnimatorPtr == nullptr);
-	if (playerButtonDisabled) ImGui::BeginDisabled();
-	if (ImGui::Button("Play Player Attack"))
-	{
-		if (!gPlayerAttackPlaying && gPlayerAnimatorPtr && gPlayerAttackAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-		{
-			gPlayerAnimatorPtr->PlayAnimation(gPlayerAttackAnimPtr);
-			LogAnimChange("Player", "attack", gPlayerAnimState);
-			LogAnimStart("Player", "attack", gPlayerAttackDurationSec);
-			ApplyDamage(gEnemyStatus, 10, "Player attack");
-			gPlayerAttackPlaying = true;
-			gPlayerSlashPlaying = false;
-			gPlayerCastPlaying = false;
-			gPlayerAttackTimer = 0.0f;
-		}
-	}
-	if (ImGui::Button("Play Player Slash"))
-	{
-		if (gPlayerAnimatorPtr && gPlayerSlashAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-		{
-			gPlayerAnimatorPtr->PlayAnimation(gPlayerSlashAnimPtr);
-			LogAnimChange("Player", "slash", gPlayerAnimState);
-			LogAnimStart("Player", "slash", gPlayerSlashDurationSec);
-			ApplyDamage(gEnemyStatus, 10, "Player slash");
-			gPlayerSlashPlaying = true;
-			gPlayerAttackPlaying = false;
-			gPlayerCastPlaying = false;
-			gPlayerSlashTimer = 0.0f;
-		}
-	}
-	if (ImGui::Button("Play Player Casting"))
-	{
-		if (gPlayerAnimatorPtr && gPlayerCastAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-		{
-			gPlayerAnimatorPtr->PlayAnimation(gPlayerCastAnimPtr);
-			LogAnimChange("Player", "cast", gPlayerAnimState);
-			LogAnimStart("Player", "cast", gPlayerCastDurationSec);
-			ApplyDamage(gEnemyStatus, 10, "Player cast");
-			gPlayerCastPlaying = true;
-			gPlayerAttackPlaying = false;
-			gPlayerSlashPlaying = false;
-			gPlayerCastTimer = 0.0f;
-		}
-	}
-	if (playerButtonDisabled) ImGui::EndDisabled();
-
+	// 플레이어가 없거나 애니메이터가 없으면 버튼 비활성화
+	bool disabled = !gPlayerPtr || !gPlayerPtr->GetAnimator();
+	if (disabled) ImGui::BeginDisabled();
+	
+	// 플레이어 애니메이션 제어 버튼
+	if (ImGui::Button("Attack"))  { if (gPlayerPtr) gPlayerPtr->StartAttack(); }
+	if (ImGui::Button("Slash"))   { if (gPlayerPtr) gPlayerPtr->StartSlash(); }
+	if (ImGui::Button("Casting")) { if (gPlayerPtr) gPlayerPtr->StartCast(); }
+	
+	if (disabled) ImGui::EndDisabled();
 	ImGui::End();
 
-	// 별도 애니메이션 창 (보조)
+	// 두 번째 UI 창: "Animation (Alt)" (같은 기능, 다른 위치)
 	ImGui::Begin("Animation (Alt)");
-	// HP 바 표시 (보조 창)
-	ImGui::Text("HP");
-	ImGui::PushStyleColor(ImGuiCol_PlotHistogram, IM_COL32(200, 40, 40, 255)); // enemy: red
-	ImGui::ProgressBar(enemyHpRatio, ImVec2(-1, 0), ("Enemy HP: " + std::to_string(gEnemyStatus.hp)).c_str());
-	ImGui::PopStyleColor();
-	ImGui::ProgressBar(playerHpRatio, ImVec2(-1, 0), ("Player HP: " + std::to_string(gPlayerStatus.hp)).c_str());
+	DrawHpBars();
 
-	bool playerButtonDisabled2 = (gPlayerAnimatorPtr == nullptr);
-	if (playerButtonDisabled2) ImGui::BeginDisabled();
-	if (ImGui::Button("Play Player Attack##anim_window"))
-	{
-		if (!gPlayerAttackPlaying && gPlayerAnimatorPtr && gPlayerAttackAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-		{
-			gPlayerAnimatorPtr->PlayAnimation(gPlayerAttackAnimPtr);
-			LogAnimChange("Player", "attack", gPlayerAnimState);
-			LogAnimStart("Player", "attack", gPlayerAttackDurationSec);
-			ApplyDamage(gEnemyStatus, 50, "Player attack");
-			gPlayerAttackPlaying = true;
-			gPlayerSlashPlaying = false;
-			gPlayerCastPlaying = false;
-			gPlayerAttackTimer = 0.0f;
-		}
-	}
-	if (ImGui::Button("Play Player Slash##anim_window"))
-	{
-		if (gPlayerAnimatorPtr && gPlayerSlashAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-		{
-			gPlayerAnimatorPtr->PlayAnimation(gPlayerSlashAnimPtr);
-			LogAnimChange("Player", "slash", gPlayerAnimState);
-			LogAnimStart("Player", "slash", gPlayerSlashDurationSec);
-			ApplyDamage(gEnemyStatus, 20, "Player slash");
-			gPlayerSlashPlaying = true;
-			gPlayerAttackPlaying = false;
-			gPlayerCastPlaying = false;
-			gPlayerSlashTimer = 0.0f;
-		}
-	}
-	if (ImGui::Button("Play Player Casting##anim_window"))
-	{
-		if (gPlayerAnimatorPtr && gPlayerCastAnimPtr && gEnemyStatus.hp > 0 && !gEnemyDyingPlaying && !gEnemyDyingDone)
-		{
-			gPlayerAnimatorPtr->PlayAnimation(gPlayerCastAnimPtr);
-			LogAnimChange("Player", "cast", gPlayerAnimState);
-			LogAnimStart("Player", "cast", gPlayerCastDurationSec);
-			ApplyDamage(gEnemyStatus, 30, "Player cast");
-			gPlayerCastPlaying = true;
-			gPlayerAttackPlaying = false;
-			gPlayerSlashPlaying = false;
-			gPlayerCastTimer = 0.0f;
-		}
-	}
-	if (playerButtonDisabled2) ImGui::EndDisabled();
+	if (disabled) ImGui::BeginDisabled();
+	// ##alt는 버튼 ID를 구분하기 위한 접미사
+	if (ImGui::Button("Attack##alt"))  { if (gPlayerPtr) gPlayerPtr->StartAttack(); }
+	if (ImGui::Button("Slash##alt"))   { if (gPlayerPtr) gPlayerPtr->StartSlash(); }
+	if (ImGui::Button("Casting##alt")) { if (gPlayerPtr) gPlayerPtr->StartCast(); }
+	if (disabled) ImGui::EndDisabled();
 
 	ImGui::End();
 }
+#pragma endregion
 
-// ==========================================
-// 씬 렌더링 함수 (큐브 + 광원)
-// ==========================================
+#pragma region Scene Rendering
 
-void drawScene(Shader& lightingShader,
-	Shader& skinnedShader,
-	Shader& lightCubeShader,
-	unsigned int cubeVAO,
-	unsigned int lightVAO,
-	unsigned int diffuseMap,
-	unsigned int specularMap,
-	Model* backgroundModel,
-	Model* enemyModel,
-	Animator* enemyAnimatorPtr,
-	Model* playerModel,
-	Animator* playerAnimatorPtr,
-	unsigned int shadowMap,
-	const glm::mat4& lightSpaceMatrix)
+// 메인 씬 렌더링
+// 조명과 그림자가 적용된 모든 오브젝트를 렌더링합니다.
+void drawScene(Shader& skinnedShader, unsigned int shadowMap, const glm::mat4& lightSpaceMatrix)
 {
-	const size_t MAX_BONES_SHADER = 100;
-
-	// 텍스처 바인딩
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, diffuseMap);
-
-	glActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D, specularMap);
-
+	// 그림자 맵을 텍스처 유닛 2에 바인딩
 	glActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, shadowMap);
 
-	// 카메라 행렬
-	glm::mat4 projection = glm::perspective(
-		glm::radians(camera.Zoom),
-		(float)SCR_WIDTH / (float)SCR_HEIGHT,
-		0.1f, 100.0f
-	);
+	// 투영 행렬 (원근 투영)
+	glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+	// 뷰 행렬 (카메라 변환)
 	glm::mat4 view = camera.GetViewMatrix();
 
-	// 조명 쉐이더 설정
-	lightingShader.use();
-	lightingShader.setMat4("projection", projection);
-	lightingShader.setMat4("view", view);
-	lightingShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
+	// 조명 색상 계산
+	// Blinn-Phong 조명 모델의 각 성분을 계산합니다.
+	glm::vec3 diffuseColor  = gLightColor * gDiffuseStrength;   // 난반사 색상
+	glm::vec3 ambientColor  = diffuseColor * gAmbientStrength;  // 환경광 색상
+	glm::vec3 specularColor = gLightColor * gSpecularStrength;  // 정반사 색상
 
-	lightingShader.setVec3("light.position", gLightPos);
-	lightingShader.setVec3("viewPos", camera.Position);
-
-	glm::vec3 diffuseColor  = gLightColor * gDiffuseStrength;
-	glm::vec3 ambientColor  = diffuseColor * gAmbientStrength;
-	glm::vec3 specularColor = gLightColor * gSpecularStrength;
-
-	lightingShader.setVec3("light.ambient", ambientColor);
-	lightingShader.setVec3("light.diffuse", diffuseColor);
-	lightingShader.setVec3("light.specular", specularColor);
-
-	lightingShader.setFloat("material.shininess", 32.0f);
-
-	// 텍스처 유닛 연결
-	lightingShader.setInt("material.diffuse", 0);
-	lightingShader.setInt("material.specular", 1);
-	lightingShader.setInt("shadowMap", 2);
-
-	// 배경 렌더링 (본 없음 → identity), 스케일 30
-	if (backgroundModel)
-	{
+	// 셰이더 공통 설정을 하는 람다 함수
+	// 각 오브젝트를 그리기 전에 공통 uniform 변수들을 설정합니다.
+	auto setupShader = [&]() {
 		skinnedShader.use();
-		skinnedShader.setMat4("projection", projection);
-		skinnedShader.setMat4("view", view);
-		skinnedShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
-		skinnedShader.setVec3("light.position", gLightPos);
-		skinnedShader.setVec3("viewPos", camera.Position);
-		skinnedShader.setVec3("light.ambient", ambientColor);
-		skinnedShader.setVec3("light.diffuse", diffuseColor);
-		skinnedShader.setVec3("light.specular", specularColor);
-		skinnedShader.setFloat("material.shininess", 32.0f);
-		skinnedShader.setInt("material.diffuse", 0);
-		skinnedShader.setInt("material.specular", 1);
-		skinnedShader.setInt("shadowMap", 2);
+		skinnedShader.setMat4("projection", projection);           // 투영 행렬
+		skinnedShader.setMat4("view", view);                       // 뷰 행렬
+		skinnedShader.setMat4("lightSpaceMatrix", lightSpaceMatrix); // 그림자 계산용 행렬
+		skinnedShader.setVec3("light.position", gLightPos);       // 광원 위치
+		skinnedShader.setVec3("viewPos", camera.Position);         // 카메라 위치 (정반사 계산용)
+		skinnedShader.setVec3("light.ambient", ambientColor);      // 환경광 색상
+		skinnedShader.setVec3("light.diffuse", diffuseColor);     // 난반사 색상
+		skinnedShader.setVec3("light.specular", specularColor);    // 정반사 색상
+		skinnedShader.setFloat("material.shininess", 32.0f);        // 반짝임 정도
+		skinnedShader.setInt("shadowMap", 2);                      // 그림자 맵 텍스처 유닛
+	};
 
-		glm::mat4 modelMat = glm::mat4(1.0f);
-		modelMat = glm::translate(modelMat, glm::vec3(0.0f, -2.0f, 0.0f));
-		modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.x), glm::vec3(1, 0, 0));
-		modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.y), glm::vec3(0, 1, 0));
-		modelMat = glm::rotate(modelMat, glm::radians(gBackgroundRotateDeg.z), glm::vec3(0, 0, 1));
-		modelMat = glm::scale(modelMat, glm::vec3(10.0f));
-		skinnedShader.setMat4("model", modelMat);
-
-		size_t boneCount = std::min(gIdentityBones.size(), MAX_BONES_SHADER);
-		for (size_t i = 0; i < boneCount; ++i)
-			skinnedShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", gIdentityBones[i]);
-
-		backgroundModel->Draw(skinnedShader);
+	// 배경 렌더링
+	if (gBackgroundPtr) {
+		setupShader();
+		skinnedShader.setInt("material.diffuse", 0);   // 디퓨즈 텍스처 유닛
+		skinnedShader.setInt("material.specular", 1); // 스페큘러 텍스처 유닛
+		gBackgroundPtr->Render(skinnedShader);
 	}
 
-	// 스키닝 모델 렌더링 (적)
-	if (enemyModel && enemyAnimatorPtr)
-	{
-		skinnedShader.use();
-		skinnedShader.setMat4("projection", projection);
-		skinnedShader.setMat4("view", view);
-		skinnedShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
-		skinnedShader.setVec3("light.position", gLightPos);
-		skinnedShader.setVec3("viewPos", camera.Position);
-		skinnedShader.setVec3("light.ambient", ambientColor);
-		skinnedShader.setVec3("light.diffuse", diffuseColor);
-		skinnedShader.setVec3("light.specular", specularColor);
+	// 적 캐릭터 렌더링
+	if (gEnemyPtr) {
+		setupShader();
 		skinnedShader.setFloat("shininess", 32.0f);
 		skinnedShader.setInt("texture_diffuse1", 0);
 		skinnedShader.setInt("texture_specular1", 1);
-		skinnedShader.setInt("shadowMap", 2);
-
-		glm::mat4 modelMat = glm::mat4(1.0f);
-		modelMat = glm::translate(modelMat, glm::vec3(0.0f, -1.0f, 0.0f));
-		modelMat = glm::rotate(modelMat, glm::radians(90.0f), glm::vec3(0, 1, 0));
-		modelMat = glm::scale(modelMat, glm::vec3(0.002f));
-		skinnedShader.setMat4("model", modelMat);
-
-		auto transforms = enemyAnimatorPtr->GetFinalBoneMatrices();
-		size_t boneCount = std::min(transforms.size(), MAX_BONES_SHADER);
-		for (size_t i = 0; i < boneCount; ++i)
-			skinnedShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", transforms[i]);
-
-		enemyModel->Draw(skinnedShader);
+		// 위치: (0, -1, 0), 크기: 0.002, Y축 회전: 90도
+		gEnemyPtr->Render(skinnedShader, glm::vec3(0.0f, -1.0f, 0.0f), 0.002f, 90.0f);
 	}
 
-	// 스키닝 모델 렌더링 (플레이어)
-	if (playerModel && playerAnimatorPtr)
-	{
-		skinnedShader.use();
-		skinnedShader.setMat4("projection", projection);
-		skinnedShader.setMat4("view", view);
-		skinnedShader.setMat4("lightSpaceMatrix", lightSpaceMatrix);
-		skinnedShader.setVec3("light.position", gLightPos);
-		skinnedShader.setVec3("viewPos", camera.Position);
-		skinnedShader.setVec3("light.ambient", ambientColor);
-		skinnedShader.setVec3("light.diffuse", diffuseColor);
-		skinnedShader.setVec3("light.specular", specularColor);
-		skinnedShader.setFloat("material.shininess", 32.0f);
+	// 플레이어 캐릭터 렌더링
+	if (gPlayerPtr) {
+		setupShader();
 		skinnedShader.setInt("material.diffuse", 0);
 		skinnedShader.setInt("material.specular", 1);
-		skinnedShader.setInt("shadowMap", 2);
-
-		glm::mat4 modelMat = glm::mat4(1.0f);
-		modelMat = glm::translate(modelMat, glm::vec3(2.0f, -1.0f, 0.0f));
-		modelMat = glm::rotate(modelMat, glm::radians(-90.0f), glm::vec3(0, 1, 0));
-		modelMat = glm::scale(modelMat, glm::vec3(0.002f));
-		skinnedShader.setMat4("model", modelMat);
-
-		auto transforms = playerAnimatorPtr->GetFinalBoneMatrices();
-		size_t boneCount = std::min(transforms.size(), MAX_BONES_SHADER);
-		for (size_t i = 0; i < boneCount; ++i)
-			skinnedShader.setMat4("finalBonesMatrices[" + std::to_string(i) + "]", transforms[i]);
-
-		playerModel->Draw(skinnedShader);
+		// 위치: (2, -1, 0), 크기: 0.002, Y축 회전: -90도
+		gPlayerPtr->Render(skinnedShader, glm::vec3(2.0f, -1.0f, 0.0f), 0.002f, -90.0f);
 	}
-
-	// 광원 큐브 렌더링
-	lightCubeShader.use();
-	lightCubeShader.setMat4("projection", projection);
-	lightCubeShader.setMat4("view", view);
-
-	glm::mat4 lightModel = glm::mat4(1.0f);
-	lightModel = glm::translate(lightModel, gLightPos);
-	lightModel = glm::scale(lightModel, glm::vec3(0.2f));
-	lightCubeShader.setMat4("model", lightModel);
-
-	glBindVertexArray(lightVAO);
-	glDrawArrays(GL_TRIANGLES, 0, 36);
-	glBindVertexArray(0);
 }
+#pragma endregion
 
-// ==========================================
-// 기존 콜백/입력 함수들 (내용은 그대로 유지)
-// ==========================================
+#pragma region Callbacks
 
+// 입력 처리
+// 매 프레임 호출되어 키보드 입력을 처리합니다.
 void processInput(GLFWwindow* window)
 {
-	// UI 모드이면 카메라 이동(WASD) 및 종료(ESC) 키 입력을 막음
-    // 카메라 입력 제어 비활성화 (고정 위치/회전 사용)
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-        glfwSetWindowShouldClose(window, true);
+	// ESC 키를 누르면 프로그램 종료
+	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		glfwSetWindowShouldClose(window, true);
 }
 
+// 프레임버퍼 크기 변경 콜백
+// 윈도우 크기가 변경되면 뷰포트를 조정합니다.
 void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 {
 	glViewport(0, 0, width, height);
 }
 
 // 마우스 이동 콜백
-void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
-{
-    // 마우스 기반 카메라 회전 비활성화
-}
+// 현재는 사용하지 않지만, FPS 스타일 카메라 제어에 사용할 수 있습니다.
+void mouse_callback(GLFWwindow* window, double xposIn, double yposIn) {}
 
-// 스크롤 콜백
-void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
-{
-    // 스크롤 기반 카메라 줌 비활성화
-}
+// 마우스 휠 콜백
+// 현재는 사용하지 않지만, 줌 기능에 사용할 수 있습니다.
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {}
 
-// 키보드 콜백 (UI 모드 토글 포함)
+// 키보드 입력 콜백
+// 키보드 입력을 처리합니다.
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-	ImGui_ImplGlfw_KeyCallback(window, key, scancode, action, mods); // ImGui에 전달
+	// ImGui에 키 입력 전달 (UI 입력 처리)
+	ImGui_ImplGlfw_KeyCallback(window, key, scancode, action, mods);
 
-	if (key == GLFW_KEY_TAB && action == GLFW_PRESS)
-	{
+	// TAB 키로 UI 모드 토글
+	if (key == GLFW_KEY_TAB && action == GLFW_PRESS) {
 		g_UiMode = !g_UiMode;
-
-		if (g_UiMode) {
-			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-		}
-		else {
-			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-		}
+		// UI 모드일 때는 커서 표시, 아니면 숨김
+		glfwSetInputMode(window, GLFW_CURSOR, g_UiMode ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
 	}
 }
 
 // 마우스 버튼 콜백
+// 마우스 버튼 입력을 ImGui에 전달합니다.
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
-	ImGui_ImplGlfw_MouseButtonCallback(window, button, action, mods); // ImGui에 전달
+	ImGui_ImplGlfw_MouseButtonCallback(window, button, action, mods);
 }
+#pragma endregion
 
+#pragma region Shadow Map
 
-//그림자 전용 함수
-
+// 그림자 맵 설정
+// 그림자를 만들기 위한 깊이 맵 프레임버퍼와 텍스처를 생성합니다.
+// Shadow Mapping 기법을 사용합니다.
 void setupShadowMap(unsigned int& depthMapFBO, unsigned int& depthMap)
 {
-    // FBO 생성
-    glGenFramebuffers(1, &depthMapFBO);
+	// 프레임버퍼 생성 (깊이 정보만 저장)
+	glGenFramebuffers(1, &depthMapFBO);
+	
+	// 깊이 텍스처 생성
+	glGenTextures(1, &depthMap);
+	glBindTexture(GL_TEXTURE_2D, depthMap);
+	// 깊이 정보만 저장하는 텍스처 (색상 정보는 필요 없음)
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
 
-    // 깊이 텍스처 생성
-    glGenTextures(1, &depthMap);
-    glBindTexture(GL_TEXTURE_2D, depthMap);
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        GL_DEPTH_COMPONENT,
-        SHADOW_WIDTH, SHADOW_HEIGHT,
-        0,
-        GL_DEPTH_COMPONENT,
-        GL_FLOAT,
-        nullptr
-    );
+	// 텍스처 파라미터 설정
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);  // 최근접 필터
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);  // 경계 처리
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+	// 경계 색상을 흰색으로 설정 (그림자가 아닌 영역)
+	float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
 
-    // 필터 / 래핑 설정
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-    float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
-    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
-
-    // FBO에 깊이 텍스처 부착
-    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-    glFramebufferTexture2D(
-        GL_FRAMEBUFFER,
-        GL_DEPTH_ATTACHMENT,
-        GL_TEXTURE_2D,
-        depthMap,
-        0
-    );
-
-    // 컬러 버퍼 비활성화
-    glDrawBuffer(GL_NONE);
-    glReadBuffer(GL_NONE);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0); 
-    //사용자 정의 FBO 사용 종료
-		//다시 윈도우 화면에 그리기 시작
+	// 프레임버퍼에 깊이 텍스처 연결
+	glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+	// 색상 버퍼는 사용하지 않음 (깊이만 필요)
+	glDrawBuffer(GL_NONE);
+	glReadBuffer(GL_NONE);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void renderCubes(Shader& shader, unsigned int cubeVAO)
-{
-    // 큐브 렌더링
-    glBindVertexArray(cubeVAO);
-
-    for (unsigned int i = 0; i < gCubeCount; i++)
-    {
-        glm::mat4 modelMat = glm::mat4(1.0f);
-        modelMat = glm::translate(modelMat, gCubePositions[i]);
-        float angle = 20.0f * i;
-        modelMat = glm::rotate(
-            modelMat,
-            glm::radians(angle),
-            glm::vec3(1.0f, 0.3f, 0.5f)
-        );
-        shader.setMat4("model", modelMat);
-
-        glDrawArrays(GL_TRIANGLES, 0, 36);
-    }
-
-    glBindVertexArray(0);
-}
-
-// 빛 시점 행렬(light-space matrix) 계산 함수
+// 광원 공간 변환 행렬 계산
+// 광원의 시점에서 장면을 바라보는 변환 행렬을 계산합니다.
+// 이 행렬은 그림자 맵 생성과 그림자 판정에 사용됩니다.
 glm::mat4 computeLightSpaceMatrix()
 {
-    // 방향광처럼 사용하기 위한 직교 투영 설정임
-    float near_plane = 1.0f;
-    float far_plane  = 25.0f;
-    glm::mat4 lightProjection = glm::ortho(
-        -10.0f, 10.0f,
-        -10.0f, 10.0f,
-        near_plane, far_plane
-    );
-
-    // 조명 위치에서 원점을 바라보는 view 행렬 설정임
-    glm::mat4 lightView = glm::lookAt(
-        gLightPos,
-        glm::vec3(0.0f, 0.0f, 0.0f),
-        glm::vec3(0.0f, 1.0f, 0.0f)
-    );
-
-    return lightProjection * lightView;
+	float near_plane = 1.0f;   // 근거리 평면
+	float far_plane  = 25.0f;  // 원거리 평면
+	
+	// 직교 투영 행렬 (광원은 평행광처럼 동작)
+	// -10 ~ 10 범위의 영역을 투영
+	glm::mat4 lightProjection = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, near_plane, far_plane);
+	
+	// 뷰 행렬 (광원 위치에서 원점을 바라봄)
+	glm::mat4 lightView = glm::lookAt(gLightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+	
+	// 최종 변환 행렬 = 투영 × 뷰
+	return lightProjection * lightView;
 }
+#pragma endregion
